@@ -1,0 +1,2030 @@
+<title>Print Strength Bench</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<style>
+:root{
+  --plane:#e5eaef; --surface:#fbfcfd; --surface-2:#f1f4f7; --surface-3:#e8edf2;
+  --ink:#0d1418; --ink-2:#4b565c; --muted:#7c878d; --rule:#ccd5dd; --rule-2:#e2e8ee;
+  --accent:#2a78d6; --accent-2:#1c5cab; --accent-soft:#dbe8f9;
+  --good:#0ca30c; --warn:#fab219; --serious:#ec835a; --critical:#d03b3b;
+  --s1:#2a78d6; --s2:#eb6834; --s3:#1baf7a; --s4:#eda100; --s5:#8a9399;
+  --grid:#dde4ea; --axis:#b9c3cb; --view:#eef2f6;
+  --sans:"IBM Plex Sans",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --r:3px;
+}
+@media (prefers-color-scheme:dark){ :root:not([data-theme="light"]){
+  --plane:#0a0c0e; --surface:#14181b; --surface-2:#1a1f23; --surface-3:#222a30;
+  --ink:#f1f4f6; --ink-2:#a9b3b9; --muted:#7c878d; --rule:#2a3138; --rule-2:#1f262b;
+  --accent:#3987e5; --accent-2:#5598e7; --accent-soft:#16283d;
+  --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s4:#c98500; --s5:#79838a;
+  --grid:#232a30; --axis:#39424a; --view:#0f1316;
+}}
+:root[data-theme="dark"]{
+  --plane:#0a0c0e; --surface:#14181b; --surface-2:#1a1f23; --surface-3:#222a30;
+  --ink:#f1f4f6; --ink-2:#a9b3b9; --muted:#7c878d; --rule:#2a3138; --rule-2:#1f262b;
+  --accent:#3987e5; --accent-2:#5598e7; --accent-soft:#16283d;
+  --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s4:#c98500; --s5:#79838a;
+  --grid:#232a30; --axis:#39424a; --view:#0f1316;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--plane);color:var(--ink);font-family:var(--sans);
+  font-size:13.5px;line-height:1.5;-webkit-font-smoothing:antialiased}
+.app{max-width:1400px;margin:0 auto;padding-inline:16px;padding-block:16px 40px}
+h1{margin:0;font-size:18px;font-weight:600;letter-spacing:-.01em}
+button,select,input{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.mono,.num{font-family:var(--mono);font-variant-numeric:tabular-nums}
+
+/* title bar */
+.bar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;
+  padding-bottom:12px;border-bottom:1px solid var(--rule);margin-bottom:14px}
+.bar .tag{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);
+  border:1px solid var(--rule);border-radius:99px;padding:2px 9px}
+.bar .sp{margin-left:auto;display:flex;gap:8px}
+
+/* shell: viewport + task pane, the way the wizard sits beside the model */
+.shell{display:grid;grid-template-columns:minmax(0,1fr) 336px;gap:14px;align-items:start}
+@media (max-width:1000px){.shell{grid-template-columns:1fr}.pane{order:-1}}
+
+/* viewport */
+.view{background:var(--surface);border:1px solid var(--rule);border-radius:5px;
+  display:flex;flex-direction:column;min-height:520px}
+.view-top{display:flex;align-items:center;gap:4px;flex-wrap:wrap;
+  padding:7px 9px;border-bottom:1px solid var(--rule-2);background:var(--surface-2);
+  border-radius:5px 5px 0 0}
+.vbtn{background:transparent;border:1px solid transparent;border-radius:var(--r);
+  padding:5px 10px;cursor:pointer;font-size:12.5px;color:var(--ink-2)}
+.vbtn:hover{background:var(--surface-3)}
+.vbtn.on{background:var(--surface);border-color:var(--rule);color:var(--ink);font-weight:600}
+.vsep{width:1px;height:18px;background:var(--rule);margin:0 5px}
+.view-body{flex:1;padding:12px;background:var(--view);position:relative;min-width:0}
+.view-foot{display:flex;flex-wrap:wrap;gap:6px 18px;padding:8px 12px;
+  border-top:1px solid var(--rule-2);background:var(--surface-2);font-size:12px;
+  border-radius:0 0 5px 5px}
+.stat{display:flex;gap:6px}
+.stat b{font-weight:500;color:var(--muted)}
+.stat span{font-family:var(--mono);font-variant-numeric:tabular-nums}
+svg{display:block;max-width:100%}
+.empty{display:flex;flex-direction:column;gap:8px;align-items:center;justify-content:center;
+  height:100%;min-height:380px;color:var(--muted);text-align:center;padding:24px}
+
+/* task pane wizard */
+.pane{background:var(--surface);border:1px solid var(--rule);border-radius:5px;overflow:hidden}
+.pane-h{display:flex;align-items:center;gap:8px;padding:9px 12px;
+  background:var(--surface-3);border-bottom:1px solid var(--rule);
+  font-size:12px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-2)}
+.pane-h .sp{margin-left:auto}
+.linkbtn{background:none;border:0;color:var(--accent);cursor:pointer;font-size:11.5px;
+  text-transform:none;letter-spacing:0;font-weight:500;padding:0}
+.linkbtn:hover{text-decoration:underline}
+
+.step{border-bottom:1px solid var(--rule-2)}
+.step:last-child{border-bottom:0}
+.step-h{display:flex;align-items:center;gap:10px;width:100%;background:none;border:0;
+  padding:10px 12px;cursor:pointer;text-align:left}
+.step-h:hover{background:var(--surface-2)}
+.step-h[disabled]{cursor:default;opacity:.5}
+.dot{width:20px;height:20px;border-radius:99px;flex:none;display:grid;place-items:center;
+  font-size:11px;font-weight:600;border:1.5px solid var(--rule);color:var(--muted);
+  background:var(--surface)}
+.step.done .dot{background:var(--good);border-color:var(--good);color:#fff}
+.step.active .dot{background:var(--accent);border-color:var(--accent);color:#fff}
+.step-t{min-width:0;flex:1;display:flex;flex-direction:column;gap:1px}
+.step-n{font-size:13px;font-weight:600;line-height:1.3}
+.step.active .step-n{color:var(--accent)}
+.step-s{font-size:11.5px;color:var(--muted);white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis;font-family:var(--mono)}
+.step-b{padding:2px 12px 14px;display:none}
+.step.active .step-b{display:block}
+.step-help{font-size:12px;color:var(--ink-2);margin-bottom:11px;line-height:1.45}
+
+.field{margin-bottom:11px}
+.field:last-child{margin-bottom:0}
+label{display:block;font-size:11.5px;font-weight:500;color:var(--ink-2);margin-bottom:4px}
+select,input[type=text],input[type=number]{background:var(--surface-2);
+  border:1px solid var(--rule);border-radius:var(--r);padding:6px 8px;width:100%;font-size:13px}
+input[type=range]{width:100%;accent-color:var(--accent)}
+.row{display:flex;gap:6px}.row>*{min-width:0}
+.choices{display:grid;grid-template-columns:repeat(3,1fr);gap:5px}
+.choice{background:var(--surface-2);border:1px solid var(--rule);border-radius:var(--r);
+  padding:7px 4px;cursor:pointer;font-size:12px;color:var(--ink-2)}
+.choice:hover{border-color:var(--accent)}
+.choice.on{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:500}
+.seg{display:flex;border:1px solid var(--rule);border-radius:var(--r);overflow:hidden}
+.seg button{flex:1;background:var(--surface-2);border:0;border-right:1px solid var(--rule);
+  padding:6px 3px;cursor:pointer;font-size:12px;color:var(--ink-2)}
+.seg button:last-child{border-right:0}
+.seg button.on{background:var(--accent);color:#fff;font-weight:500}
+.rng-val{display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin-top:2px}
+.nav{display:flex;gap:7px;margin-top:13px}
+.btn{background:var(--surface-2);border:1px solid var(--rule);border-radius:var(--r);
+  padding:7px 13px;cursor:pointer;font-size:12.5px}
+.btn:hover{border-color:var(--accent)}
+.btn[disabled]{opacity:.45;cursor:default}
+.btn.pri{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+.btn.pri:hover{background:var(--accent-2);border-color:var(--accent-2)}
+.btn.wide{width:100%;justify-content:center}
+.nav .sp{margin-left:auto}
+.note{font-size:11.5px;color:var(--muted);line-height:1.45}
+.hintbox{background:var(--surface-2);border:1px solid var(--rule-2);border-left:2px solid var(--accent);
+  border-radius:var(--r);padding:8px 10px;font-size:11.5px;color:var(--ink-2);line-height:1.45;margin-top:10px}
+
+/* drop */
+.drop{border:1.5px dashed var(--rule);border-radius:var(--r);background:var(--surface-2);
+  padding:14px 12px;text-align:center;cursor:pointer;margin-bottom:10px}
+.drop:hover,.drop.hot{border-color:var(--accent);background:var(--accent-soft)}
+.chips{display:flex;flex-direction:column;gap:5px;margin-bottom:10px}
+.chip{display:flex;align-items:center;gap:7px;background:var(--surface-2);
+  border:1px solid var(--rule);border-radius:var(--r);padding:5px 6px 5px 8px;font-size:12px}
+.chip .sw{width:8px;height:8px;border-radius:2px;flex:none}
+.chip .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chip button{background:none;border:0;cursor:pointer;color:var(--muted);font-size:14px;padding:0 3px}
+.chip button:hover{color:var(--critical)}
+
+/* verdict */
+.verdict{border-radius:var(--r);padding:11px 12px;margin-bottom:11px;
+  border:1px solid var(--rule);border-left-width:3px;background:var(--surface-2)}
+.verdict .vt{font-size:12px;font-weight:600;display:flex;align-items:center;gap:6px}
+.verdict .vd{font-size:11.5px;color:var(--ink-2);margin-top:3px}
+.fos{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:26px;
+  font-weight:600;line-height:1.1;margin-top:6px}
+.fos small{font-size:11.5px;font-family:var(--sans);font-weight:400;color:var(--muted);margin-left:5px}
+
+/* chart + tooltip */
+.tip{position:absolute;pointer-events:none;background:var(--surface);border:1px solid var(--rule);
+  border-radius:var(--r);padding:7px 9px;font-size:12px;box-shadow:0 4px 14px rgba(0,0,0,.14);z-index:5;min-width:140px}
+.tip-h{font-family:var(--mono);font-weight:600;margin-bottom:4px;font-size:11.5px}
+.tip-r{display:flex;justify-content:space-between;gap:12px}
+.tip-r span:last-child{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.legend{display:flex;flex-wrap:wrap;gap:7px 15px;margin-top:9px;font-size:11.5px;color:var(--ink-2)}
+.lg{display:inline-flex;align-items:center;gap:6px}
+.lg .sw{width:11px;height:3px;border-radius:2px;flex:none}
+.lg .sq{width:9px;height:9px;border-radius:2px;flex:none}
+
+/* table */
+table{border-collapse:collapse;width:100%;font-size:12.5px;background:var(--surface);border-radius:var(--r)}
+th,td{text-align:right;padding:7px 10px;border-bottom:1px solid var(--rule-2);white-space:nowrap}
+th:first-child,td:first-child{text-align:left}
+th{font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:600}
+td.n{font-family:var(--mono);font-variant-numeric:tabular-nums}
+tr.gov td{background:var(--accent-soft)}
+.tbl-scroll{overflow-x:auto}
+.sect-grid{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(250px,1fr))}
+figure{margin:0;min-width:0}
+figcaption{font-size:11.5px;color:var(--ink-2);margin-bottom:6px;display:flex;gap:6px;align-items:center}
+ul.advice{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:9px}
+ul.advice li{display:flex;gap:9px;font-size:12.5px;color:var(--ink-2);line-height:1.45}
+ul.advice li::before{content:"";width:3px;flex:none;border-radius:2px;background:var(--accent);opacity:.55}
+.warns li::before{background:var(--warn);opacity:1}
+.err{border:1px solid var(--critical);border-left-width:3px;border-radius:var(--r);
+  padding:10px 12px;font-size:12.5px;background:var(--surface);margin-bottom:10px}
+footer{margin-top:20px;font-size:11.5px;color:var(--muted);max-width:86ch;line-height:1.55}
+.busy{opacity:.5}
+/* Results state: red the moment an input changes, clearing when the numbers
+   catch up. On a big file the recalculation is slow enough to wait for, so it
+   stays red with a button rather than auto-running. */
+.vstat{margin-left:auto;display:flex;align-items:center;gap:7px}
+.chip-s{display:inline-flex;align-items:center;gap:6px;border-radius:99px;
+  padding:3px 10px;font-size:11.5px;font-weight:600;border:1px solid transparent;
+  white-space:nowrap}
+.chip-s .d{width:7px;height:7px;border-radius:99px;flex:none}
+.chip-stale{color:var(--critical);border-color:var(--critical);
+  background:color-mix(in srgb, var(--critical) 11%, transparent);
+  animation:pulse 1.1s ease-in-out infinite}
+.chip-stale .d{background:var(--critical)}
+.chip-ok{color:var(--good);border-color:color-mix(in srgb, var(--good) 40%, transparent);
+  background:color-mix(in srgb, var(--good) 11%, transparent);
+  opacity:0;transition:opacity .45s ease}
+.chip-ok.show{opacity:1}
+.chip-ok .d{background:var(--good)}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
+.btn.recalc{border-color:var(--critical);color:var(--critical);font-weight:600;
+  padding:4px 10px;font-size:12px;animation:pulse 1.1s ease-in-out infinite}
+.btn.recalc:hover{background:color-mix(in srgb, var(--critical) 12%, transparent)}
+@media (prefers-reduced-motion:reduce){.chip-stale,.btn.recalc{animation:none}}
+.stale .view-body,.stale .view-foot{opacity:.42;transition:opacity .12s}
+.stale .verdict{opacity:.42}
+.stale-note{color:var(--critical);font-size:11.5px;font-weight:600;margin-top:6px}
+/* Below 1 the part breaks. That should not look like any other number. */
+.verdict.fail{border-color:var(--critical);border-left-width:4px;
+  background:color-mix(in srgb, var(--critical) 9%, var(--surface-2));
+  animation:failpulse 1.5s ease-in-out infinite}
+.verdict.fail .fos{color:var(--critical)}
+.fos-alarm{display:inline-flex;align-items:center;gap:5px;border-radius:99px;
+  padding:2px 9px;font-size:11px;font-weight:700;letter-spacing:.04em;
+  background:var(--critical);color:#fff;margin-left:8px;vertical-align:middle}
+@keyframes failpulse{
+  0%,100%{box-shadow:0 0 0 0 color-mix(in srgb, var(--critical) 42%, transparent)}
+  55%{box-shadow:0 0 0 5px color-mix(in srgb, var(--critical) 0%, transparent)}}
+@media (prefers-reduced-motion:reduce){.verdict.fail{animation:none;
+  border-color:var(--critical);border-left-width:5px}}
+/* Sits beside the view cube, the way a CAD viewport puts it. */
+.fitbtn{position:absolute;left:92px;bottom:20px;width:34px;height:34px;border-radius:99px;
+  display:grid;place-items:center;cursor:pointer;color:var(--ink-2);
+  background:var(--surface);border:1px solid var(--rule);
+  box-shadow:0 1px 4px rgba(0,0,0,.10);padding:0}
+.fitbtn:hover{color:var(--accent);border-color:var(--accent)}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+
+<div class="app">
+  <div class="bar">
+    <h1>Print Strength Bench</h1>
+    <span class="tag">structural check for 3D prints</span>
+    <div class="sp">
+      <button class="btn" id="btn-restart">Start over</button>
+    </div>
+  </div>
+
+  <div class="shell">
+    <div class="view">
+      <div class="view-top" id="view-top"></div>
+      <div class="view-body" id="view-body"></div>
+      <div class="view-foot" id="view-foot"></div>
+    </div>
+
+    <div class="pane">
+      <div class="pane-h">
+        <span>Analysis wizard</span>
+        <span class="sp"><button class="linkbtn" id="btn-help">What is this?</button></span>
+      </div>
+      <div id="steps"></div>
+    </div>
+  </div>
+
+  <footer id="disclaimer">
+    First-order estimate from geometry and published material data. Section properties are exact;
+    the material constants are not — layer adhesion swings with temperature, cooling, chamber and
+    moisture, easily by a factor of two between printers running the same spool. Expect ±30%, worse
+    near sharp internal corners, which are not modelled. Fatigue, creep, impact and contact are not
+    modelled. Good for comparison — which axis is weak, which section fails first, whether
+    reorienting wins. Not a basis for anything load-bearing or safety-critical.
+  </footer>
+</div>
+<input type="file" id="file" accept=".gcode,.gco,.g,.nc,.3mf,.stl,.step,.stp" multiple hidden>
+
+<script src="engine.js"></script>
+<script src="samples.js"></script>
+<script>
+(() => {
+"use strict";
+const $ = id => document.getElementById(id);
+const SERIES = ["--s1", "--s2"];
+const cssv = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const el = (t, c, x) => { const n = document.createElement(t);
+  if (c) n.className = c; if (x !== undefined) n.textContent = x; return n; };
+
+const FEAT_COLOR = {
+  "outer wall":"--s1", "inner wall":"--s1", "overhang wall":"--s1",
+  "sparse infill":"--s2", "solid infill":"--s3", "top surface":"--s3",
+  "bottom surface":"--s3", "gap fill":"--s4", "bridge":"--s4", "outline":"--s1",
+};
+const FEAT_ORDER = ["outer wall","inner wall","solid infill","top surface","bottom surface",
+                    "sparse infill","gap fill","bridge","overhang wall","outline"];
+const REGIONS = ["bottom","top","left","right","front","back"];
+const DIRS = [["-Z","down"],["+Z","up"],["+X","+X"],["-X","−X"],["+Y","+Y"],["-Y","−Y"]];
+
+// The wizard: the same order SimulationXpress walks you through, with the
+// part step first because here you bring your own sliced file.
+const STEPS = ["part","fixtures","loads","material","run","results"];
+
+const S = {
+  step: "part",
+  reached: {part:true},
+  ran: false,
+  files: [],
+  fix: "bottom",
+  mag: 4, unit: "kg", dir: "+X", at: "top",
+  material: "", quality: "typical", temp: 20,
+  deflect: 0,
+  fosLimit: 1,
+  view: "3d",
+  axis: "auto",
+  deflScale: 0,
+  pick: null,          // "fix" | "load" while choosing a face
+  fixFace: null, atFace: null,
+  showKt: true,
+  dirty: false, lastMs: 0, auto: true, okFlash: 0,
+  shade: "shadedLines", anim: false,
+  layerHeight: 0.2, nozzle: 0.4, walls: 3, infill: 20,
+};
+
+// ---- options + run ---------------------------------------------------------
+function opts() {
+  const o = {material: S.material || undefined, quality: S.quality,
+             temp: S.temp > 20 ? S.temp : undefined,
+             deflect: S.deflect > 0 ? S.deflect : undefined,
+             // Only a mesh needs these; G-code carries its own.
+             layerHeight: S.layerHeight, nozzle: S.nozzle,
+             walls: S.walls, infill: S.infill/100};
+  if (S.ran && S.mag > 0 && S.fix && S.at) {
+    o.fix = S.fix;
+    o.load = `${S.mag}${S.unit} ${S.dir} at ${S.at}`;
+  }
+  return o;
+}
+
+// A picked face is turned into the region string the engine already takes:
+// its own extent along the axis its normal is closest to. Tighter than a
+// named band, and the centroid that comes back is the face's real one.
+function faceToRegion(face, bbox) {
+  const r = PS.faceRegion(face, bbox);
+  const lo = Math.max(r.lo, bbox[AX[r.axis]]);
+  const hi = Math.min(r.hi, bbox[AX[r.axis] + 3]);
+  const spanLo = Math.abs(lo - bbox[AX[r.axis]]);
+  const spanHi = Math.abs(hi - bbox[AX[r.axis] + 3]);
+  // Express it the way the engine reads regions.
+  return spanLo < spanHi ? `${r.axis}<${hi.toFixed(2)}` : `${r.axis}>${lo.toFixed(2)}`;
+}
+function faceDirection(face) {
+  const n = face.normal;
+  const a = [Math.abs(n[0]), Math.abs(n[1]), Math.abs(n[2])];
+  const i = a[0] >= a[1] && a[0] >= a[2] ? 0 : (a[1] >= a[2] ? 1 : 2);
+  // push into the face, i.e. against its outward normal
+  return (n[i] >= 0 ? "-" : "+") + "XYZ"[i];
+}
+const AX = {x:0, y:1, z:2};
+function noop() {
+}
+let timer = null;
+function schedule() {
+  if (timer) clearTimeout(timer);
+  timer = setTimeout(() => { analyse(); paintStatus(); draw(); }, 60);
+}
+function analyse() {
+  const o = opts();
+  const t0 = (performance && performance.now) ? performance.now() : Date.now();
+  for (const f of S.files) {
+    try { f.result = f.model ? PS.analyzeModel(f.model, o) : {ok:false, error:f.parseError}; }
+    catch (err) { f.result = {ok:false, error:err.message}; }
+  }
+  S.lastMs = ((performance && performance.now) ? performance.now() : Date.now()) - t0;
+  // Fast enough to keep live; slow enough that you would rather ask for it.
+  S.auto = S.lastMs < 350;
+  S.dirty = false;
+  S.okFlash = Date.now();
+}
+
+// Called by every control that changes the answer. Presentation-only controls
+// (view tabs, deflection scale, the factor-of-safety threshold) do not.
+function touch(reSteps) {
+  S.dirty = true;
+  paintStatus();
+  if (reSteps) renderSteps();
+  if (S.auto) schedule();
+  else { paintStatus(); draw(); }
+}
+
+function paintStatus() {
+  const host = $("view-top");
+  if (!host) return;
+  let box = host.querySelector(".vstat");
+  if (!box) { box = el("div","vstat"); host.append(box); }
+  box.textContent = "";
+  document.querySelector(".app").classList.toggle("stale", S.dirty);
+  if (S.dirty) {
+    const c = el("span","chip-s chip-stale");
+    c.append(el("span","d"), el("span", null,
+      S.auto ? "recalculating…" : "results out of date"));
+    box.append(c);
+    if (!S.auto) {
+      const b = el("button","btn recalc","Recalculate");
+      b.onclick = () => { analyse(); paintStatus(); renderSteps(); draw(); };
+      box.append(b);
+    }
+  } else if (Date.now() - S.okFlash < 1400) {
+    const c = el("span","chip-s chip-ok show");
+    c.append(el("span","d"), el("span", null, `updated · ${S.lastMs.toFixed(0)} ms`));
+    box.append(c);
+    setTimeout(() => { c.classList.remove("show"); }, 700);
+  }
+}
+function refresh() { analyse(); renderSteps(); draw(); paintStatus(); }
+
+// ---- files -----------------------------------------------------------------
+function addFile(name, data) {
+  view3dCache = null;
+  S.fixFace = S.atFace = null; S.pick = null;
+  if (S.files.length >= 2) S.files.shift();
+  const f = {name, model:null, parseError:null, result:null};
+  try { f.model = PS.parse(data); } catch (err) { f.parseError = `${err.name}: ${err.message}`; }
+  S.files.push(f);
+  S.axis = "auto";
+  if (f.model) { S.reached.fixtures = true; if (S.step === "part") go("fixtures"); }
+  refresh();
+}
+function readFiles(list) {
+  for (const file of Array.from(list).slice(0,2)) {
+    const r = new FileReader();
+    const binary = /\.(stl|3mf)$/i.test(file.name);
+    r.onload = () => addFile(file.name, r.result);
+    if (binary) r.readAsArrayBuffer(file); else r.readAsText(file);
+  }
+}
+$("file").onchange = e => { readFiles(e.target.files); e.target.value = ""; };
+
+function go(step) {
+  S.step = step;
+  S.reached[step] = true;
+  // Picking a face or a direction only makes sense if you can see it.
+  if (step === "fixtures" || step === "loads" || step === "part") S.view = "3d";
+  renderSteps();
+  draw();
+  const node = document.querySelector(".step.active");
+  if (node && window.innerWidth <= 1000) node.scrollIntoView({block:"nearest"});
+}
+const okPart = () => S.files.some(f => f.model);
+const stepDone = k => ({
+  part: okPart(), fixtures: okPart() && !!S.fix, loads: okPart() && S.mag > 0 && !!S.at,
+  material: okPart(), run: S.ran, results: S.ran,
+}[k]);
+
+// ---- formatting ------------------------------------------------------------
+const fmtN = n => n >= 1000 ? `${(n/1000).toFixed(2)} kN` : `${n.toFixed(n<10?2:0)} N`;
+const kgf = n => `${(n/9.80665).toFixed(n/9.80665 < 10 ? 1 : 0)} kgf`;
+function sig(v) {
+  const a = Math.abs(v);
+  if (a >= 100) return v.toFixed(0);
+  if (a >= 10) return v.toFixed(1);
+  if (a >= 1) return v.toFixed(2);
+  if (a >= 0.01) return v.toFixed(3);
+  return v.toExponential(1);
+}
+function fosStatus(sf) {
+  if (sf < 1) return ["critical", "The part fails under this load"];
+  if (sf < 1.5) return ["serious", "Very little margin"];
+  if (sf < 2.5) return ["warn", "Workable for a static load"];
+  return ["good", "The part is safe under this load"];
+}
+// Returns the analysis result, not the file wrapper — every caller wants
+// the result's own fields (bbox, material, volume).
+const firstOk = () => { const f = S.files.find(x => x.result && x.result.ok);
+  return f ? f.result : null; };
+const allOk = () => S.files.filter(f => f.result && f.result.ok);
+function sims() { return allOk().map(f => ({f, sim: f.result.sim})).filter(x => x.sim && !x.sim.error); }
+
+// ---- the wizard ------------------------------------------------------------
+const TITLES = {part:"Part", fixtures:"Fixtures", loads:"Loads", material:"Material",
+                run:"Run", results:"Results"};
+
+function summary(k) {
+  const f = S.files[S.files.length-1];
+  switch (k) {
+    case "part": return S.files.length ? S.files.map(x => x.name).join(" · ") : "no file yet";
+    case "fixtures": return (S.fixFace ? "face · " : "") + (S.fix || "—");
+    case "loads": return `${S.mag} ${S.unit}, ${S.dir}, at ${S.atFace ? "face" : S.at}`;
+    case "material": {
+      const r = firstOk();
+      const nm = S.material || (r ? r.material.name + " (from file)" : "from file");
+      return `${nm} · ${S.quality}${S.temp > 20 ? " · " + S.temp + " °C" : ""}`;
+    }
+    case "run": return S.ran ? "analysis complete" : "not run yet";
+    case "results": {
+      const s = sims()[0];
+      if (!s) return S.ran ? "no load path" : "—";
+      return `factor of safety ${s.sim.worst.sf < 100 ? s.sim.worst.sf.toFixed(2) : s.sim.worst.sf.toFixed(0)}`;
+    }
+  }
+}
+
+function renderSteps() {
+  const host = $("steps"); host.textContent = "";
+  STEPS.forEach((k, i) => {
+    const done = stepDone(k), active = S.step === k;
+    const enabled = S.reached[k] || done;
+    const box = el("div", "step" + (active ? " active" : "") + (done && !active ? " done" : ""));
+    const h = el("button", "step-h");
+    h.type = "button";
+    if (!enabled) h.disabled = true;
+    h.onclick = () => go(k);
+    h.setAttribute("aria-expanded", String(active));
+    const dot = el("span", "dot", done && !active ? "✓" : String(i+1));
+    const t = el("span", "step-t");
+    t.append(el("span", "step-n", TITLES[k]), el("span", "step-s", summary(k)));
+    h.append(dot, t);
+    box.append(h, body(k));
+    host.append(box);
+  });
+}
+
+function body(k) {
+  const b = el("div", "step-b");
+  ({part: bPart, fixtures: bFix, loads: bLoad, material: bMat, run: bRun, results: bRes}[k])(b);
+  return b;
+}
+function nav(b, back, next, nextLabel, nextOk) {
+  const n = el("div", "nav");
+  if (back) { const x = el("button","btn","Back"); x.onclick = () => go(back); n.append(x); }
+  n.append(el("span","sp"));
+  if (next) {
+    const x = el("button", "btn pri", nextLabel || "Next");
+    x.disabled = nextOk === false;
+    x.onclick = () => go(next);
+    n.append(x);
+  }
+  b.append(n);
+}
+function help(b, text) { b.append(el("div","step-help", text)); }
+
+// 1 — part
+function bPart(b) {
+  help(b, "Load the G-code you are about to print, or an STL. G-code is better: it carries the real walls, infill and layer heights.");
+  const d = el("div","drop");
+  d.append(el("div", null, "Drop a .gcode, .gcode.3mf or .stl here"),
+           el("div","note","or click to choose · up to two files to compare orientations"));
+  d.append(el("div","note",
+    "Bambu Studio and OrcaSlicer export .gcode.3mf — that works directly. "
+    + "Plain .3mf and .stl are read as meshes; STEP only when it carries tessellated geometry."));
+  d.lastChild.style.marginTop = "4px";
+  d.onclick = () => $("file").click();
+  ["dragenter","dragover"].forEach(ev => d.addEventListener(ev, e => { e.preventDefault(); d.classList.add("hot"); }));
+  ["dragleave","drop"].forEach(ev => d.addEventListener(ev, e => {
+    e.preventDefault(); if (ev === "drop") readFiles(e.dataTransfer.files); d.classList.remove("hot"); }));
+  b.append(d);
+  if (S.files.length) {
+    const c = el("div","chips");
+    S.files.forEach((f, i) => {
+      const row = el("div","chip");
+      const sw = el("span","sw"); sw.style.background = `var(${SERIES[i]})`;
+      const nm = el("span","nm", f.name);
+      const x = el("button", null, "×");
+      x.type = "button"; x.setAttribute("aria-label", `Remove ${f.name}`);
+      x.onclick = () => { S.files.splice(i,1); S.axis = "auto"; view3dCache = null; refresh(); };
+      row.append(sw, nm, x); c.append(row);
+    });
+    b.append(c);
+  }
+  const ex = el("div","row");
+  ex.style.flexWrap = "wrap";
+  for (const key of Object.keys(SAMPLES)) {
+    const x = el("button","btn", key.replace("bracket — printed ", "bracket, "));
+    x.style.flex = "1 1 40%";
+    x.onclick = () => { const s = SAMPLES[key];
+      if (!S.files.some(f => f.name === s.name)) addFile(s.name, s.make()); };
+    ex.append(x);
+  }
+  b.append(ex);
+  const r = firstOk();
+  if (r) {
+    const bb = r.bbox;
+    const box = el("div","hintbox");
+    const row = (k, v) => {
+      const x = el("div");
+      x.style.cssText = "display:flex;gap:8px;justify-content:space-between";
+      x.append(el("span",null,k), el("span","mono",v));
+      box.append(x);
+    };
+    row("source", (r.container ? r.container + " · " : "") + (r.kind === "gcode" ? r.slicer : "mesh"));
+    row("size", `${(bb[3]-bb[0]).toFixed(1)} × ${(bb[4]-bb[1]).toFixed(1)} × ${(bb[5]-bb[2]).toFixed(1)} mm`);
+    if (r.kind === "gcode") {
+      row("layer height", `${r.layerHeightMm ? r.layerHeightMm.toFixed(2) : "?"} mm (from file)`);
+      if (r.extWidthMm) row("extrusion width", `${r.extWidthMm.toFixed(2)} mm (measured)`);
+      row("layers", String(r.layerCount));
+    } else if (r.print) {
+      row("layer height", `${r.print.layerHeight.toFixed(2)} mm (assumed)`);
+      row("extrusion width", `${r.print.extWidth.toFixed(2)} mm`);
+    }
+    row("volume", `${(r.volume/1000).toFixed(2)} cm³`);
+    b.append(box);
+  }
+
+  // A mesh carries no print settings, so they have to be supplied — and they
+  // change the answer: walls and infill set how much material is actually in
+  // each section.
+  const lastModel = S.files.length ? S.files[S.files.length-1].model : null;
+  const isMesh = lastModel && lastModel.kind !== "gcode";
+  if (isMesh && !r) {
+    const w = el("div","hintbox");
+    w.style.borderLeftColor = "var(--warn)";
+    w.append(el("div", null, "A mesh carries no material. Choose one to analyse it."));
+    const go4 = el("button","btn","Choose a material");
+    go4.style.marginTop = "7px";
+    go4.onclick = () => go("material");
+    w.append(go4);
+    b.append(w);
+  }
+  if (isMesh) {
+    const ps = el("div","field");
+    ps.style.marginTop = "12px";
+    ps.append(el("label", null, "Print settings (a mesh does not carry them)"));
+    const grid = el("div");
+    grid.style.cssText = "display:grid;grid-template-columns:1fr 1fr;gap:7px";
+    const num = (label, key, min, max, step, suffix) => {
+      const w = el("div");
+      const l = el("label", null, label);
+      l.style.fontSize = "11px";
+      const i = el("input"); i.type = "number";
+      i.min = min; i.max = max; i.step = step; i.value = S[key];
+      i.oninput = e => {
+        const v = parseFloat(e.target.value);
+        if (!isNaN(v)) { S[key] = Math.max(min, Math.min(max, v)); touch(false); }
+      };
+      w.append(l, i);
+      return w;
+    };
+    grid.append(num("layer height (mm)", "layerHeight", 0.02, 1.2, 0.02),
+                num("nozzle (mm)", "nozzle", 0.1, 2.0, 0.1),
+                num("wall loops", "walls", 0, 12, 1),
+                num("infill (%)", "infill", 0, 100, 5));
+    ps.append(grid);
+    ps.append(el("div","note",
+      "Walls and infill set how much material each section actually holds — they move the "
+      + "numbers. Extrusion width is taken as 1.05× the nozzle. Layer height sets where the "
+      + "Z sections fall; its effect on strength runs through layer adhesion, which no model "
+      + "predicts from height alone."));
+    ps.lastChild.style.marginTop = "6px";
+    b.append(ps);
+  }
+  nav(b, null, "fixtures", "Next", okPart());
+}
+
+// 2 — fixtures
+function bFix(b) {
+  help(b, "What holds the part still? Pick the face it is bolted, clamped or glued to. Everything on the other side of a cut from this is what the load has to travel through.");
+  b.append(pickButton("fix", "Select a face in the 3D view", S.fixFace));
+  const g = el("div","choices");
+  for (const r of REGIONS) {
+    const x = el("button", "choice" + (S.fix === r ? " on" : ""), r);
+    x.onclick = () => { S.fix = r; S.fixFace = null; S.axis = "auto"; touch(true); };
+    g.append(x);
+  }
+  const f1 = el("div","field"); f1.append(el("label",null,"Held at"), g); b.append(f1);
+  const f2 = el("div","field");
+  const lab = el("label", null, "or an exact region");
+  lab.setAttribute("for", "fix-custom");
+  const inp = el("input"); inp.type = "text"; inp.id = "fix-custom"; inp.value = S.fix;
+  inp.spellcheck = false; inp.placeholder = "z<5";
+  inp.oninput = e => {
+    S.fix = e.target.value.trim(); S.fixFace = null; S.axis = "auto";
+    for (const c of g.children) c.classList.toggle("on", c.textContent === S.fix);
+    touch(false); updateSummaries();
+  };
+  f2.append(lab, inp); b.append(f2);
+  b.append(el("div","hintbox","A named region is a 15% band of the bounding box, not a single face. Hold a smaller area with an inequality like z<3 if the whole base is not really fixed."));
+  nav(b, "part", "loads", "Next", !!S.fix);
+}
+
+// 3 — loads
+function bLoad(b) {
+  help(b, "Where does the force act, how big is it, and which way does it push?");
+  const f1 = el("div","field");
+  f1.append(el("label",null,"Force"));
+  const row = el("div","row");
+  const mag = el("input"); mag.type = "number"; mag.min = "0"; mag.step = "0.5";
+  mag.value = S.mag; mag.style.flex = "1.3";
+  mag.oninput = e => { S.mag = parseFloat(e.target.value) || 0; touch(false); updateSummaries(); };
+  const unit = el("select"); unit.style.flex = "1";
+  for (const u of ["kg","N","kN","lb"]) unit.append(new Option(u, u, false, u === S.unit));
+  unit.onchange = e => { S.unit = e.target.value; touch(true); };
+  row.append(mag, unit); f1.append(row); b.append(f1);
+
+  const f2 = el("div","field");
+  f2.append(el("label",null,"Direction"));
+  const g = el("div","choices");
+  for (const [v, lbl] of DIRS) {
+    const x = el("button", "choice" + (S.dir === v ? " on" : ""), lbl);
+    x.onclick = () => { S.dir = v; touch(true); };
+    g.append(x);
+  }
+  f2.append(g); b.append(f2);
+
+  const f3 = el("div","field");
+  f3.append(pickButton("load", "Select a face in the 3D view", S.atFace));
+  const lab = el("label", null, "Applied at"); lab.setAttribute("for","at-custom");
+  const g2 = el("div","choices");
+  for (const r of REGIONS) {
+    const x = el("button", "choice" + (S.at === r ? " on" : ""), r);
+    x.onclick = () => { S.at = r; S.atFace = null; touch(true); };
+    g2.append(x);
+  }
+  const inp = el("input"); inp.type = "text"; inp.id = "at-custom"; inp.value = S.at;
+  inp.spellcheck = false; inp.style.marginTop = "5px"; inp.placeholder = "x>35";
+  inp.oninput = e => {
+    S.at = e.target.value.trim(); S.atFace = null;
+    for (const c of g2.children) c.classList.toggle("on", c.textContent === S.at);
+    touch(false); updateSummaries();
+  };
+  f3.append(lab, g2, inp); b.append(f3);
+  nav(b, "fixtures", "material", "Next", S.mag > 0 && !!S.at);
+}
+
+// 4 — material
+function bMat(b) {
+  help(b, "Pick what you are printing in. G-code usually names its own filament, which is used unless you override it here.");
+  const f1 = el("div","field");
+  const lab = el("label", null, "Filament or resin"); lab.setAttribute("for","mat-sel");
+  const sel = el("select"); sel.id = "mat-sel";
+  sel.append(new Option("from the file", ""));
+  const gF = document.createElement("optgroup"); gF.label = "Filament";
+  for (const k of Object.keys(PS.FDM)) gF.append(new Option(k, k));
+  const gR = document.createElement("optgroup"); gR.label = "Resin";
+  for (const k of Object.keys(PS.RESIN)) gR.append(new Option(k, k));
+  sel.append(gF, gR);
+  sel.value = S.material;
+  sel.onchange = e => { S.material = e.target.value; touch(true); };
+  f1.append(lab, sel); b.append(f1);
+
+  const f2 = el("div","field");
+  f2.append(el("label",null,"Print quality"));
+  const seg = el("div","seg");
+  for (const q of ["good","typical","poor"]) {
+    const x = el("button", S.quality === q ? "on" : null, q[0].toUpperCase()+q.slice(1));
+    x.onclick = () => { S.quality = q; touch(true); };
+    seg.append(x);
+  }
+  f2.append(seg); b.append(f2);
+
+  const f3 = el("div","field");
+  const l3 = el("label", null, "Service temperature"); l3.setAttribute("for","temp-r");
+  const rng = el("input"); rng.type = "range"; rng.id = "temp-r";
+  rng.min = "20"; rng.max = "200"; rng.step = "5"; rng.value = S.temp;
+  rng.oninput = e => { S.temp = parseFloat(e.target.value); touch(false); updateSummaries();
+    const v = document.querySelector("#temp-val"); if (v) v.textContent = `${S.temp} °C`; };
+  const rv = el("div","rng-val");
+  rv.append(el("span","num", `${S.temp} °C`), el("span", null, "derated against HDT"));
+  rv.firstChild.id = "temp-val";
+  f3.append(l3, rng, rv); b.append(f3);
+
+  const r = firstOk();
+  if (r) {
+    const m = r.material;
+    b.append(el("div","hintbox",
+      `${m.name}: ${m.uts} MPa in-plane, layer adhesion ${(m.z*100).toFixed(0)}% → ` +
+      `${(m.uts*m.z).toFixed(1)} MPa across layers. ${m.notes}`));
+  }
+  nav(b, "loads", "run", "Next", true);
+}
+
+// 5 — run
+function bRun(b) {
+  help(b, "Everything is set. The analysis reconstructs every extrusion, cuts the part at hundreds of planes, and finds the one that runs out of margin first.");
+  const sum = el("div","hintbox");
+  sum.innerHTML = "";
+  for (const [k, v] of [["Part", summary("part")], ["Held at", S.fix],
+                        ["Load", `${S.mag} ${S.unit} ${S.dir} at ${S.at}`],
+                        ["Material", summary("material")]]) {
+    const row = el("div"); row.style.cssText = "display:flex;gap:8px;justify-content:space-between";
+    row.append(el("span",null,k), el("span","mono",v));
+    sum.append(row);
+  }
+  b.append(sum);
+  if (S.ran && S.dirty && !S.auto) {
+    const w = el("div","hintbox");
+    w.style.borderLeftColor = "var(--critical)";
+    w.textContent = "Something changed since the last run — the results below are out of date.";
+    b.append(w);
+  }
+  const run = el("button","btn pri wide",
+                 S.ran ? (S.dirty ? "Recalculate" : "Run again") : "Run analysis");
+  run.style.marginTop = "11px";
+  run.onclick = () => {
+    S.ran = true; S.reached.results = true; S.axis = "auto";
+    analyse(); go("results"); paintStatus();
+  };
+  b.append(run);
+  nav(b, "material", null);
+}
+
+// 6 — results
+function bRes(b) {
+  const list = sims();
+  if (!S.ran) { help(b, "Run the analysis first."); nav(b, "run", null); return; }
+  const bad = allOk().map(f => f.result.sim).filter(s => s && s.error);
+  if (!list.length) {
+    for (const s of bad) b.append(el("div","err", s.error));
+    if (!bad.length) help(b, "No result — check the earlier steps.");
+    nav(b, "run", null); return;
+  }
+  for (const {f, sim} of list) {
+    const sf = sim.worst.sf;
+    const [st, word] = fosStatus(sf);
+    const v = el("div","verdict" + (sf < 1 ? " fail" : ""));
+    v.style.borderLeftColor = `var(--${st})`;
+    const t = el("div","vt");
+    const dot = el("span"); dot.style.cssText =
+      `width:8px;height:8px;border-radius:99px;background:var(--${st});display:inline-block`;
+    t.append(dot, el("span", null, S.files.length > 1 ? f.name : word));
+    v.append(t);
+    if (S.files.length > 1) v.append(el("div","vd", word));
+    const n = el("div","fos", sf < 100 ? sf.toFixed(2) : sf.toFixed(0));
+    if (sf < 1) n.append(el("span","fos-alarm","BELOW 1"));
+    n.append(el("small", null, "lowest factor of safety"));
+    v.append(n);
+    v.append(el("div","vd",
+      `at ${sim.worst.axis.toUpperCase()} = ${sim.worst.sec.pos.toFixed(1)} mm · ` +
+      `${sig(sim.worst.sigmaEq)} of ${sig(sim.worst.cap)} MPa allowable`));
+    if (S.dirty) {
+      const n = el("div","stale-note",
+        S.auto ? "recalculating…" : "out of date — press Recalculate");
+      v.append(n);
+    }
+    b.append(v);
+  }
+
+  const r0 = allOk()[0].result;
+  if (r0.concentrations && r0.concentrations.length) {
+    const box = el("div","hintbox");
+    box.style.borderLeftColor = "var(--critical)";
+    const head = el("div"); head.style.fontWeight = "600";
+    head.textContent = `${r0.concentrations.length} stress raiser`
+      + (r0.concentrations.length > 1 ? "s found" : " found");
+    box.append(head);
+    for (const c of r0.concentrations.slice(0,3)) {
+      const line = el("div");
+      const kf = 1 + r0.notchSensitivity*(c.kt-1);
+      line.textContent = `${c.kind} ${c.size.toFixed(1)} mm — Kt ${c.kt.toFixed(2)}, `
+        + `Kf ${kf.toFixed(2)} felt in ${r0.material.name}`;
+      box.append(line);
+    }
+    box.append(el("div","note",
+      `Notch sensitivity q = ${r0.notchSensitivity.toFixed(2)} at ${r0.material.elong}% elongation — `
+      + `a brittle material feels nearly all of Kt, a ductile one yields locally instead.`));
+    b.append(box);
+  }
+
+  const f1 = el("div","field");
+  const l1 = el("label", null, "Show where the part is below a factor of safety of");
+  l1.setAttribute("for","fos-lim");
+  const inp = el("input"); inp.type = "number"; inp.id = "fos-lim";
+  inp.min = "0.1"; inp.step = "0.1"; inp.value = S.fosLimit;
+  inp.oninput = e => { S.fosLimit = Math.max(0.1, parseFloat(e.target.value) || 1); draw(); };
+  f1.append(l1, inp); b.append(f1);
+
+  const fx = el("div","field");
+  fx.append(el("label", null, "Deflected shape in the 3D view"));
+  const seg = el("div","seg");
+  const presets = [0,1,5,20];
+  if (S.deflScale && !presets.includes(S.deflScale)) presets.push(S.deflScale);
+  for (const v of presets) {
+    const x = el("button", S.deflScale === v ? "on" : null, v ? `${v}×` : "off");
+    x.onclick = () => { S.deflScale = v; S.view = "3d"; draw(); renderSteps(); };
+    seg.append(x);
+  }
+  fx.append(seg);
+  const ab = el("button", "btn wide" + (S.anim ? " pri" : ""),
+                S.anim ? "Stop animation" : "Animate the deflection");
+  ab.style.marginTop = "6px";
+  ab.onclick = () => {
+    S.anim = !S.anim;
+    if (S.anim) { if (!S.deflScale) S.deflScale = 5; S.view = "3d"; }
+    animStart = performance.now();
+    draw(); renderSteps();
+  };
+  fx.append(ab);
+  fx.append(el("div","note","1× is the real deflection. Exaggerate to see the shape on a stiff part."));
+  fx.lastChild.style.marginTop = "4px";
+  b.append(fx);
+
+  const f2 = el("div","field");
+  const l2 = el("label", null, "Deflection you can accept"); l2.setAttribute("for","defl-r");
+  const rng = el("input"); rng.type = "range"; rng.id = "defl-r";
+  rng.min = "0"; rng.max = "10"; rng.step = "0.25"; rng.value = S.deflect;
+  rng.oninput = e => { S.deflect = parseFloat(e.target.value); touch(false);
+    const v = document.querySelector("#defl-val");
+    if (v) v.textContent = S.deflect > 0 ? `${S.deflect.toFixed(2)} mm` : "off"; };
+  const rv = el("div","rng-val");
+  const sp = el("span","num", S.deflect > 0 ? `${S.deflect.toFixed(2)} mm` : "off");
+  sp.id = "defl-val";
+  rv.append(sp, el("span", null, "0 = off"));
+  f2.append(l2, rng, rv); b.append(f2);
+
+  const adv = adviceList();
+  if (adv.length) {
+    const ul = el("ul","advice");
+    for (const a of adv.slice(0, 4)) ul.append(el("li", null, a));
+    const wrap = el("div"); wrap.style.marginTop = "11px"; wrap.append(ul);
+    b.append(wrap);
+  }
+  nav(b, "run", null);
+}
+
+function pickButton(which, label, current) {
+  const wrap = el("div","field");
+  const on = S.pick === which;
+  const btn = el("button", "btn wide" + (on ? " pri" : ""),
+                 on ? "Click a face in the view…  (cancel)" : label);
+  btn.onclick = () => {
+    S.pick = on ? null : which;
+    S.view = "3d";
+    renderSteps(); draw();
+  };
+  wrap.append(btn);
+  if (current) {
+    const n = current.normal.map(v => v.toFixed(2)).join(", ");
+    const note = el("div","note",
+      `face selected · ${current.area.toFixed(0)} mm² · normal (${n})`);
+    note.style.marginTop = "5px";
+    const clear = el("button","linkbtn","clear");
+    clear.style.marginLeft = "6px";
+    clear.onclick = () => {
+      if (which === "fix") { S.fixFace = null; S.fix = "bottom"; }
+      else { S.atFace = null; S.at = "top"; }
+      refresh();
+    };
+    note.append(clear);
+    wrap.append(note);
+  }
+  return wrap;
+}
+
+function updateSummaries() {
+  STEPS.forEach((k, i) => {
+    const node = $("steps").children[i];
+    if (node) node.querySelector(".step-s").textContent = summary(k);
+  });
+}
+$("btn-restart").onclick = () => {
+  S.files = []; S.ran = false; S.step = "part"; S.reached = {part:true};
+  S.axis = "auto"; S.view = "3d"; S.deflScale = 0; view3dCache = null; cam.auto = true;
+  S.pick = null; S.fixFace = null; S.atFace = null; S.fix = "bottom"; S.at = "top";
+  refresh();
+};
+$("btn-help").onclick = () => {
+  const d = $("disclaimer");
+  d.scrollIntoView({behavior: "smooth", block: "center"});
+};
+
+// ---- viewport --------------------------------------------------------------
+const VIEWS = [
+  ["3d",      "3D model"],
+  ["fos",     "Factor of safety"],
+  ["stress",  "Stress"],
+  ["section", "Section"],
+  ["axes",    "All axes"],
+];
+
+function draw() {
+  const top = $("view-top"), body = $("view-body"), foot = $("view-foot");
+  top.textContent = ""; body.textContent = ""; foot.textContent = "";
+  const files = allOk();
+  if (!files.length) {
+    const e = el("div","empty");
+    e.append(el("div", null, S.files.length ? "That file could not be read." : "No part loaded."),
+             el("div","note", S.files.length ? (S.files[0].parseError || "") :
+                "Start at step 1 in the wizard — load your G-code or an example bracket."));
+    body.append(e);
+    for (const f of S.files) if (f.result && !f.result.ok) body.append(el("div","err", f.result.error));
+    return;
+  }
+  const hasSim = sims().length > 0;
+  if (!hasSim && (S.view === "fos" || S.view === "stress")) S.view = "3d";
+
+  for (const [k, label] of VIEWS) {
+    const live = (k === "fos" || k === "stress") ? hasSim : true;
+    if (k === "3d" && S.files.length > 1) label = label;
+    const b = el("button", "vbtn" + (S.view === k ? " on" : ""), label);
+    b.disabled = !live;
+    if (!live) b.title = "run the analysis with a load to see this";
+    b.onclick = () => { S.view = k; draw(); };
+    top.append(b);
+  }
+  if (S.view === "3d") {
+    top.append(el("span","vsep"));
+    const shade = el("select");
+    shade.title = "how the part is drawn";
+    shade.style.cssText = "width:auto;padding:4px 6px;font-size:12px";
+    for (const [v,label] of SHADE_MODES) shade.append(new Option(label, v, false, v === S.shade));
+    shade.onchange = e => { S.shade = e.target.value; draw(); };
+    top.append(shade);
+
+  }
+  if (S.view === "3d" && sims().length) {
+    top.append(el("span","vsep"));
+    const lbl = el("span"); lbl.style.cssText = "font-size:12px;color:var(--muted);margin:0 6px 0 2px";
+    lbl.textContent = "deflection";
+    top.append(lbl);
+    for (const [v, t] of [[0,"off"],[1,"1×"],[5,"5×"],[20,"20×"],[0,"fit"]]) {}
+    for (const v of [0,1,5,20]) {
+      const b = el("button", "vbtn" + (S.deflScale === v ? " on" : ""), v ? `${v}×` : "off");
+      b.onclick = () => { S.deflScale = v; draw(); renderSteps(); };
+      top.append(b);
+    }
+    const anim = el("button", "vbtn" + (S.anim ? " on" : ""), S.anim ? "❚❚ stop" : "▶ animate");
+    anim.title = "sweep the deflection from nothing to full and back";
+    anim.onclick = () => {
+      S.anim = !S.anim;
+      if (S.anim && !S.deflScale) S.deflScale = 5;
+      animStart = performance.now();
+      draw(); renderSteps();
+    };
+    top.append(anim);
+    const fit = el("button","vbtn","auto");
+    fit.title = "pick an exaggeration that makes the deflection visible against the part";
+    fit.onclick = () => {
+      const s0 = sims()[0];
+      const bb = files[0].result.bbox;
+      const size = Math.max(bb[3]-bb[0], bb[4]-bb[1], bb[5]-bb[2]) || 1;
+      const d = s0.sim.deflection || 0;
+      S.deflScale = d > 1e-9 ? Math.max(1, Math.round(size*0.12/d)) : 0;
+      draw(); renderSteps();
+    };
+    top.append(fit);
+  }
+  if (S.view === "fos" || S.view === "stress") {
+    top.append(el("span","vsep"));
+    const axesAvail = ["z","x","y"].filter(a => files.some(f => (f.result.profiles[a]||[]).length));
+    const key = S.view === "fos" ? "sf" : "stress";
+    const withData = axesAvail.filter(a =>
+      files.some(f => (f.result.profiles[a]||[]).some(r => r[key] != null)));
+    if (S.axis === "auto" || !axesAvail.includes(S.axis)) {
+      const g = sims()[0];
+      S.axis = (g && withData.includes(g.sim.worst.axis)) ? g.sim.worst.axis
+             : (withData[0] || axesAvail[0]);
+    }
+    for (const a of axesAvail) {
+      const live = withData.includes(a);
+      const b = el("button", "vbtn" + (S.axis === a ? " on" : ""), a.toUpperCase() + " cuts");
+      if (!live) { b.disabled = true; b.title = "not on the load path"; }
+      b.onclick = () => { S.axis = a; draw(); };
+      top.append(b);
+    }
+  }
+
+  if (S.view !== "3d" && animRaf) { cancelAnimationFrame(animRaf); animRaf = 0; }
+  if (S.view === "3d") body.append(view3d(files));
+  else if (S.view === "axes") body.append(axisTable(files));
+  else if (S.view === "section") body.append(sectionView(files));
+  else body.append(chartView(files, S.view === "fos"));
+
+  // status bar: the numbers you glance at, not read
+  const s0 = sims()[0];
+  const r0 = files[0].result;
+  const stats = [];
+  if (s0) {
+    const sfv = s0.sim.worst.sf;
+    stats.push(["factor of safety",
+                (sfv < 100 ? sfv.toFixed(2) : sfv.toFixed(0)) + (sfv < 1 ? "  ✕ FAILS" : ""),
+                sfv < 1]);
+    stats.push(["fails at", `${s0.sim.worst.axis.toUpperCase()} = ${s0.sim.worst.sec.pos.toFixed(1)} mm`]);
+    stats.push(["stress", `${sig(s0.sim.worst.sigmaEq)} / ${sig(s0.sim.worst.cap)} MPa`]);
+    if (s0.sim.worst.sec.kf > 1.001)
+      stats.push(["stress raiser", `${s0.sim.worst.sec.ktKind} Kt ${s0.sim.worst.sec.kt.toFixed(2)} → Kf ${s0.sim.worst.sec.kf.toFixed(2)}`]);
+    if (s0.sim.deflection != null) stats.push(["deflection", `${s0.sim.deflection.toFixed(2)} mm`]);
+    if (s0.sim.twistDeg > 0.01) stats.push(["twist", `${s0.sim.twistDeg.toFixed(2)}°`]);
+  } else {
+    const ax = r0.axes[r0.weakestAxis];
+    stats.push(["governing axis", r0.weakestAxis.toUpperCase()]);
+    if (ax.breakN) stats.push(["breaks at", `${fmtN(ax.breakN)} (${kgf(ax.breakN)})`]);
+    stats.push(["weakest section", `${ax.area.toFixed(1)} mm²`]);
+    stats.push(["material", r0.material.name]);
+  }
+  for (const [k, v, alarm] of stats) {
+    const s = el("div","stat");
+    const val = el("span", null, v);
+    if (alarm) { val.style.color = "var(--critical)"; val.style.fontWeight = "700"; }
+    s.append(el("b",null,k), val); foot.append(s);
+  }
+  paintStatus();
+}
+
+// ---- chart -----------------------------------------------------------------
+function chartView(files, isFos) {
+  const wrap = el("div");
+  wrap.style.position = "relative";
+  const key = isFos ? "sf" : "stress";
+  const series = files.map(f => ({f, i: S.files.indexOf(f),
+    rows: (f.result.profiles[S.axis] || []).filter(r => r[key] != null)})).filter(s => s.rows.length > 1);
+  if (!series.length) {
+    const e = el("div","empty");
+    e.append(el("div", null, `No ${S.axis.toUpperCase()} cut is on the load path.`),
+             el("div","note", "With the part held where it is, the load reaches ground without crossing a cut on this axis. Try another axis, or hold a smaller region."));
+    wrap.append(e); return wrap;
+  }
+  const NS = "http://www.w3.org/2000/svg";
+  const W = 900, H = 340, M = {t:18, r:20, b:38, l:62};
+  const svg = document.createElementNS(NS, "svg");
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  svg.setAttribute("role","img");
+  svg.setAttribute("aria-label", isFos ? "Factor of safety along the part" : "Stress along the part");
+  const add = (tag, attrs, txt) => {
+    const n = document.createElementNS(NS, tag);
+    for (const k of Object.keys(attrs)) n.setAttribute(k, attrs[k]);
+    if (txt !== undefined) n.textContent = txt;
+    svg.append(n); return n;
+  };
+  let x0=Infinity, x1=-Infinity, ymax=-Infinity, ymin=Infinity;
+  for (const s of series) for (const r of s.rows) {
+    x0 = Math.min(x0, r.pos); x1 = Math.max(x1, r.pos);
+    ymax = Math.max(ymax, r[key]);
+    if (r[key] > 0) ymin = Math.min(ymin, r[key]);
+  }
+  if (!isFinite(ymin)) ymin = ymax || 1;
+  const logY = isFos && (ymax/Math.max(ymin,1e-9)) > 20;
+  let lo, hi;
+  if (logY) { lo = ymin*0.75; hi = ymax*1.3; }
+  else { lo = 0; hi = isFos ? Math.max(ymax*1.08, S.fosLimit*1.5) : ymax*1.08; }
+  const X = v => M.l + (v-x0)/Math.max(x1-x0,1e-9)*(W-M.l-M.r);
+  const Y = logY
+    ? v => H-M.b - (Math.log10(Math.max(v,lo))-Math.log10(lo)) /
+           Math.max(Math.log10(hi)-Math.log10(lo),1e-9)*(H-M.t-M.b)
+    : v => H-M.b - (v/Math.max(hi,1e-9))*(H-M.t-M.b);
+  const font = cssv("--sans"), mono = cssv("--mono");
+  const muted = cssv("--muted"), grid = cssv("--grid"), axisC = cssv("--axis");
+
+  // SimulationXpress shades what is below the limit; the same idea reads well
+  // on a section curve, so the failing stretch is banded rather than implied.
+  if (isFos) {
+    const band = Math.min(Y(Math.min(S.fosLimit, hi)), H-M.b);
+    if (band < H-M.b) {
+      add("rect", {x:M.l, y:band, width:W-M.l-M.r, height:(H-M.b)-band,
+                   fill:cssv("--critical"), opacity:0.08});
+    }
+  }
+  for (const t of (logY ? logTicks(lo,hi) : niceTicks(lo,hi,5))) {
+    add("line", {x1:M.l, x2:W-M.r, y1:Y(t), y2:Y(t), stroke:grid, "stroke-width":1});
+    add("text", {x:M.l-8, y:Y(t)+4, "text-anchor":"end", fill:muted, "font-size":11,
+                 "font-family":mono}, t < 1 ? t.toFixed(1) : sig(t));
+  }
+  add("line", {x1:M.l, x2:W-M.r, y1:H-M.b, y2:H-M.b, stroke:axisC, "stroke-width":1});
+  for (const t of niceTicks(x0, x1, 6)) {
+    if (t < x0 || t > x1) continue;
+    add("text", {x:X(t), y:H-M.b+17, "text-anchor":"middle", fill:muted, "font-size":11,
+                 "font-family":mono}, t.toFixed(0));
+  }
+  add("text", {x:(M.l+W-M.r)/2, y:H-5, "text-anchor":"middle", fill:muted, "font-size":11,
+               "font-family":font}, `${S.axis.toUpperCase()} position along the part (mm)`);
+  add("text", {x:10, y:M.t-4, fill:muted, "font-size":11, "font-family":font},
+      (isFos ? "factor of safety" : "von Mises stress (MPa)") + (logY ? " · log scale" : ""));
+
+  if (isFos && S.fosLimit >= lo && S.fosLimit <= hi) {
+    add("line", {x1:M.l, x2:W-M.r, y1:Y(S.fosLimit), y2:Y(S.fosLimit),
+                 stroke:cssv("--critical"), "stroke-width":1.5, "stroke-dasharray":"5 4"});
+    add("text", {x:W-M.r-4, y:Y(S.fosLimit)-6, "text-anchor":"end", fill:cssv("--critical"),
+                 "font-size":11, "font-weight":600, "font-family":font},
+        `below ${S.fosLimit} it fails`);
+  }
+  if (!isFos) {
+    const cap = series[0].rows.find(r => r.cap != null);
+    if (cap && cap.cap <= hi) {
+      add("line", {x1:M.l, x2:W-M.r, y1:Y(cap.cap), y2:Y(cap.cap), stroke:cssv("--critical"),
+                   "stroke-width":1.5, "stroke-dasharray":"5 4"});
+      add("text", {x:W-M.r-4, y:Y(cap.cap)-6, "text-anchor":"end", fill:cssv("--critical"),
+                   "font-size":11, "font-weight":600, "font-family":font},
+          `allowable ${sig(cap.cap)} MPa`);
+    }
+  }
+  for (const s of series) {
+    const col = cssv(SERIES[s.i]);
+    add("path", {d: s.rows.map((r,k) => `${k?"L":"M"}${X(r.pos).toFixed(2)} ${Y(r[key]).toFixed(2)}`).join(" "),
+                 fill:"none", stroke:col, "stroke-width":2, "stroke-linejoin":"round"});
+    let worst = s.rows[0];
+    for (const r of s.rows) if (isFos ? r[key] < worst[key] : r[key] > worst[key]) worst = r;
+    add("circle", {cx:X(worst.pos), cy:Y(worst[key]), r:4.5, fill:col,
+                   stroke:cssv("--surface"), "stroke-width":2});
+    const lx = Math.min(Math.max(X(worst.pos), M.l+18), W-M.r-18);
+    const above = Y(worst[key]) - 11 > M.t + 10;
+    add("text", {x:lx, y:Y(worst[key]) + (above ? -11 : 17), "text-anchor":"middle",
+                 fill:cssv("--ink"), "font-size":11.5, "font-weight":600, "font-family":mono},
+        isFos ? worst.sf.toFixed(2) : sig(worst.stress));
+  }
+  const hair = add("line", {x1:0,x2:0,y1:M.t,y2:H-M.b, stroke:axisC, "stroke-width":1, opacity:0});
+  const tip = el("div","tip"); tip.hidden = true;
+  svg.addEventListener("pointerleave", () => { hair.setAttribute("opacity",0); tip.hidden = true; });
+  svg.addEventListener("pointermove", ev => {
+    const bb = svg.getBoundingClientRect();
+    const px = (ev.clientX - bb.left)/bb.width*W;
+    const pos = x0 + (px - M.l)/(W-M.l-M.r)*(x1-x0);
+    if (pos < x0 || pos > x1) { hair.setAttribute("opacity",0); tip.hidden = true; return; }
+    hair.setAttribute("x1", X(pos)); hair.setAttribute("x2", X(pos)); hair.setAttribute("opacity",.85);
+    tip.textContent = "";
+    tip.append(el("div","tip-h", `${S.axis.toUpperCase()} = ${pos.toFixed(1)} mm`));
+    for (const s of series) {
+      let best = s.rows[0];
+      for (const r of s.rows) if (Math.abs(r.pos-pos) < Math.abs(best.pos-pos)) best = r;
+      const row = el("div","tip-r");
+      const lab = el("span");
+      const sw = el("span");
+      sw.style.cssText = `display:inline-block;width:9px;height:3px;border-radius:2px;margin-right:6px;background:${cssv(SERIES[s.i])}`;
+      lab.append(sw, document.createTextNode(series.length > 1 ? s.f.name.replace(/\.[^.]+$/,"") : (isFos ? "safety factor" : "stress")));
+      row.append(lab, el("span", null, isFos ? best.sf.toFixed(2) : sig(best.stress) + " MPa"));
+      tip.append(row);
+      const ar = el("div","tip-r");
+      ar.append(el("span",null,"section"), el("span",null,`${best.area.toFixed(1)} mm²`));
+      tip.append(ar);
+    }
+    tip.hidden = false;
+    tip.style.left = Math.min(Math.max(X(pos)/W*bb.width - 72, 4), bb.width - 156) + "px";
+    tip.style.top = "14px";
+  });
+  wrap.append(svg, tip);
+  if (series.length > 1) {
+    const lg = el("div","legend");
+    for (const s of series) {
+      const item = el("span","lg");
+      const sw = el("span","sw"); sw.style.background = cssv(SERIES[s.i]);
+      item.append(sw, el("span",null,s.f.name)); lg.append(item);
+    }
+    wrap.append(lg);
+  }
+  return wrap;
+}
+function logTicks(lo, hi) {
+  const out = [];
+  for (let d = Math.floor(Math.log10(lo)); d <= Math.ceil(Math.log10(hi)); d++)
+    for (const m of [1,2,5]) { const v = m*Math.pow(10,d); if (v >= lo && v <= hi) out.push(+v.toPrecision(3)); }
+  return out.length ? out : [lo, hi];
+}
+function niceTicks(lo, hi, want) {
+  const span = hi - lo;
+  if (span <= 0) return [lo];
+  const raw = span/want, mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const step = [1,2,2.5,5,10].map(m => m*mag).find(s => s >= raw) || 10*mag;
+  const out = [];
+  for (let v = Math.ceil(lo/step)*step; v <= hi + 1e-9; v += step) out.push(+v.toFixed(6));
+  return out;
+}
+
+// ---- 3D view ---------------------------------------------------------------
+//
+// A contour-stack rendering: the part's outer wall, layer by layer, drawn on a
+// 2D canvas with an orbit camera. No library and no lighting — a wireframe
+// shell reads more clearly than a shaded solid when the point is to see the
+// fixture, the load arrows and how far the thing bends.
+
+// Canvas has no color-mix, so blend the theme tokens directly.
+function toRGB(c) {
+  c = (c || "").trim();
+  if (c[0] === "#") {
+    const h = c.slice(1);
+    const n = h.length === 3 ? h.split("").map(x => x+x).join("") : h;
+    return [parseInt(n.slice(0,2),16), parseInt(n.slice(2,4),16), parseInt(n.slice(4,6),16)];
+  }
+  const m = c.match(/-?[\d.]+/g);
+  return m ? [+m[0], +m[1], +m[2]] : [128,128,128];
+}
+function mixHex(a, b, t) {
+  const A = toRGB(a), B = toRGB(b);
+  return `rgb(${Math.round(A[0]+(B[0]-A[0])*t)},${Math.round(A[1]+(B[1]-A[1])*t)},${Math.round(A[2]+(B[2]-A[2])*t)})`;
+}
+
+const cam = {az: -0.9, el: 0.42, dist: 0, tx: 0, ty: 0, auto: true};
+let animStart = 0, animRaf = 0;
+let cubeTargets = [], cubeHot = null;
+let view3dCache = null;   // {file, stack, bbox}
+
+function stackFor(f) {
+  if (view3dCache && view3dCache.file === f) return view3dCache;
+  view3dCache = {file: f, stack: PS.contourStack(f.model), shell: PS.shellLoops(f.model)};
+  return view3dCache;
+}
+
+// Standard orientations, the ones a view cube offers: six faces and the four
+// top corners.
+const ISO = Math.atan(Math.SQRT1_2);            // 35.26°, true isometric
+const VIEWS3D = [
+  ["Front",  0,            0],
+  ["Back",   Math.PI,      0],
+  ["Right",  Math.PI/2,    0],
+  ["Left",  -Math.PI/2,    0],
+  ["Top",    0,            Math.PI/2 - 0.001],
+  ["Bottom", 0,           -Math.PI/2 + 0.001],
+  ["Iso NE", -Math.PI/4,   ISO],
+  ["Iso NW",  Math.PI/4,   ISO],
+  ["Iso SE", -3*Math.PI/4, ISO],
+  ["Iso SW",  3*Math.PI/4, ISO],
+];
+const SHADE_MODES = [
+  ["shaded",      "Shaded"],
+  ["shadedLines", "Shaded + layers"],
+  ["wire",        "Wireframe"],
+  ["wireLayers",  "Wireframe + layers"],
+];
+function fitCamera(bbox) {
+  const r = 0.5*Math.hypot(bbox[3]-bbox[0], bbox[4]-bbox[1], bbox[5]-bbox[2]) || 1;
+  cam.dist = r*2.6; cam.tx = 0; cam.ty = 0;
+}
+
+function view3d(files) {
+  const wrap = el("div");
+  wrap.style.position = "relative";
+  const f = files[0];
+  const r = f.result;
+  const stage = el("div");
+  stage.style.cssText = "position:relative";
+  const cv = document.createElement("canvas");
+  cv.style.cssText = `width:100%;height:auto;display:block;border-radius:3px;touch-action:none;cursor:${S.pick ? "crosshair" : "grab"}`;
+  cv.setAttribute("role", "img");
+  cv.setAttribute("aria-label", "3D view of the part with fixture and load");
+  stage.append(cv);
+  const fitBtn = el("button","fitbtn");
+  fitBtn.type = "button";
+  fitBtn.title = "Zoom to fit";
+  fitBtn.setAttribute("aria-label", "Zoom to fit");
+  fitBtn.innerHTML =
+    '<svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true">' +
+    '<g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">' +
+    '<path d="M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8"/><path d="M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8"/>' +
+    '<path d="M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16"/><path d="M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16"/>' +
+    '<path d="M12 8.6 15.2 10.4v3.2L12 15.4 8.8 13.6v-3.2z"/><path d="M12 8.6v6.8M8.8 10.4 12 12l3.2-1.6"/>' +
+    '</g></svg>';
+  fitBtn.onclick = () => { fitCamera(r.bbox); frame(); };
+  stage.append(fitBtn);
+  wrap.append(stage);
+
+  const bb = r.bbox;
+  const ctr = [(bb[0]+bb[3])/2, (bb[1]+bb[4])/2, (bb[2]+bb[5])/2];
+  const size = Math.max(bb[3]-bb[0], bb[4]-bb[1], bb[5]-bb[2]) || 1;
+  if (cam.auto) { fitCamera(bb); cam.auto = false; }
+
+  const sim = (r.sim && !r.sim.error) ? r.sim : null;
+  const cached = stackFor(f);
+  const stack = cached.stack, shell = cached.shell;
+  const critZ = (sim && sim.worst.axis === "z") ? sim.worst.sec.pos : null;
+  const critTol = Math.max((r.bbox[5]-r.bbox[2]) / Math.max(shell.length,1) * 0.6, 0.05);
+
+
+  // Deflection: displace each point by the beam curve, scaled.
+  let curve = null;
+  if (sim && S.view === "3d" && S.deflScale > 0 && sim.curve && sim.curve.stations.length > 1) {
+    const st = sim.curve.stations, ai = {x:0, y:1, z:2}[sim.curve.axis];
+    const lo = st[0][0], hi = st[st.length-1][0];
+    curve = {ai, dir: sim.curve.dir, lo: Math.min(lo,hi), hi: Math.max(lo,hi),
+             st: st.slice().sort((a,b) => a[0]-b[0])};
+  }
+  // SolidWorks sweeps the deflection from nothing to full and back; the same
+  // motion here makes a 1 mm bend on a 40 mm part obvious.
+  // Phase comes from elapsed time, not frame count: a browser that throttles
+  // requestAnimationFrame would otherwise run the sweep in slow motion.
+  const ANIM_PERIOD = 2400;   // ms for a full out-and-back
+  const animK = () => {
+    if (!S.anim || !curve) return 1;
+    const t = ((performance.now() - animStart) % ANIM_PERIOD) / ANIM_PERIOD;
+    return (1 - Math.cos(t * 2 * Math.PI)) / 2;
+  };
+  const displace = p => {
+    if (!curve) return p;
+    const v = p[curve.ai];
+    if (v < curve.lo) return p;
+    let d;
+    if (v >= curve.hi) d = curve.st[curve.st.length-1][1];
+    else {
+      let k = 1;
+      while (k < curve.st.length && curve.st[k][0] < v) k++;
+      const a = curve.st[Math.max(0,k-1)], b = curve.st[Math.min(curve.st.length-1,k)];
+      const t = b[0] === a[0] ? 0 : (v - a[0])/(b[0] - a[0]);
+      d = a[1] + (b[1] - a[1])*t;
+    }
+    const s = d * S.deflScale * animK();
+    return [p[0] + curve.dir[0]*s, p[1] + curve.dir[1]*s, p[2] + curve.dir[2]*s];
+  };
+
+  function frame() {
+    const W = cv.clientWidth || 640;
+    const H = Math.max(300, Math.min(480, Math.round(W*0.62)));
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    cv.width = W*dpr; cv.height = H*dpr;
+    cv.style.height = H + "px";
+    const g = cv.getContext("2d");
+    g.setTransform(dpr,0,0,dpr,0,0);
+    g.clearRect(0,0,W,H);
+    g.fillStyle = cssv("--view"); g.fillRect(0,0,W,H);
+
+    const ca = Math.cos(cam.az), sa = Math.sin(cam.az);
+    const ce = Math.cos(cam.el), se = Math.sin(cam.el);
+    const fov = Math.min(W,H) * 1.15;
+    const proj = p => {
+      const x = p[0]-ctr[0], y = p[1]-ctr[1], z = p[2]-ctr[2];
+      const rx =  ca*x + sa*y;
+      const ry = -sa*x + ca*y;
+      const ey = ce*ry - se*z;
+      const ez = se*ry + ce*z;
+      const d = cam.dist + ey;
+      if (d < 0.05) return null;
+      const k = fov/d;
+      return [W/2 + rx*k + cam.tx, H/2 - ez*k + cam.ty, d];
+    };
+
+    // ground grid, so the part has somewhere to sit
+    g.strokeStyle = cssv("--grid"); g.lineWidth = 1; g.globalAlpha = .65;
+    const gs = size*0.75, gn = 6;
+    g.beginPath();
+    for (let i = -gn; i <= gn; i++) {
+      const t = i/gn*gs;
+      const a1 = proj([ctr[0]+t, ctr[1]-gs, bb[2]]), b1 = proj([ctr[0]+t, ctr[1]+gs, bb[2]]);
+      const a2 = proj([ctr[0]-gs, ctr[1]+t, bb[2]]), b2 = proj([ctr[0]+gs, ctr[1]+t, bb[2]]);
+      if (a1&&b1) { g.moveTo(a1[0],a1[1]); g.lineTo(b1[0],b1[1]); }
+      if (a2&&b2) { g.moveTo(a2[0],a2[1]); g.lineTo(b2[0],b2[1]); }
+    }
+    g.stroke(); g.globalAlpha = 1;
+
+    const fixR = safeRegion(S.fix, bb), atR = safeRegion(S.at, bb);
+    const inR = (R, p) => R && p[{x:0,y:1,z:2}[R.axis]] >= R.lo-1e-9 && p[{x:0,y:1,z:2}[R.axis]] <= R.hi+1e-9;
+
+    // The part itself. Shaded modes fill each layer's loops back to front,
+    // which for a stack of slices reads as a solid and shows the layer
+    // staircase that a printed part actually has.
+    const filled = S.shade === "shaded" || S.shade === "shadedLines";
+    const showLines = S.shade === "shadedLines" || S.shade === "wireLayers";
+    const src = filled || S.shade === "wireLayers" ? shell : shell;
+    const skip = (S.shade === "wire") ? Math.max(1, Math.ceil(src.length/14)) : 1;
+
+    const inkC = cssv("--ink-2"), fixC = cssv("--good"), critC = cssv("--critical");
+    const surfC = cssv("--view");
+    const ghost = curve ? 0.16 : 0;
+    const zSpan = Math.max(bb[5]-bb[2], 1e-6);
+
+    const order = src.map((L, i) => {
+      const c = proj([ctr[0], ctr[1], L.z]);
+      return {L, i, d: c ? c[2] : 0};
+    }).sort((a,b) => b.d - a.d);
+
+    for (const {L, i: li} of order) {
+      if (skip > 1 && li % skip !== 0 && li !== src.length-1 && li !== 0) continue;
+      const isFix = fixR && fixR.axis === "z" && L.z >= fixR.lo - 1e-9 && L.z <= fixR.hi + 1e-9;
+      const isCrit = critZ != null && Math.abs(L.z - critZ) <= critTol;
+
+      if (ghost) {
+        g.strokeStyle = inkC; g.globalAlpha = ghost; g.lineWidth = 1;
+        tracePath(g, proj, L, null);
+        g.stroke();
+      }
+      const path = tracePath(g, proj, L, displace);
+      if (!path) continue;
+      if (filled) {
+        // Opaque, so stacked slices cover each other instead of accumulating
+        // alpha into false layer banding. Form comes from a gradient with
+        // height; the only lines drawn are the ones the mode asks for.
+        const t = (L.z - bb[2])/zSpan;
+        g.globalAlpha = 1;
+        g.fillStyle = isCrit ? critC : (isFix ? fixC : mixHex(surfC, inkC, 0.34 + 0.26*t));
+        g.fill("evenodd");
+      }
+      if (showLines || !filled) {   // never in plain "Shaded"
+        g.strokeStyle = isCrit ? critC : (isFix ? fixC : inkC);
+        g.globalAlpha = isCrit ? 1 : (isFix ? .9 : (filled ? .30 : .55));
+        g.lineWidth = isCrit ? 2.2 : (isFix ? 1.6 : 1);
+        g.stroke();
+      }
+    }
+    g.globalAlpha = 1;
+
+    // fixture hatching for a non-Z region, which the contours cannot show
+    if (fixR && fixR.axis !== "z") drawRegionBox(g, proj, fixR, bb, fixC, .5);
+
+    // faces, while you are choosing one
+    lastHit = null;
+    if (S.pick) {
+      const faces = PS.facesFor(f.model);
+      let bestD = Infinity, best = null;
+      const mx = mouse.x, my = mouse.y;
+      for (const fc of faces) {
+        const c = proj(fc.centroid);
+        if (!c) continue;
+        if (mx != null) {
+          const d = Math.hypot(c[0]-mx, c[1]-my);
+          if (d < bestD) { bestD = d; best = fc; }
+        }
+      }
+      if (best && bestD < Math.max(W, H)) lastHit = best;
+      for (const fc of faces) {
+        const c = proj(fc.centroid);
+        if (!c) continue;
+        const on = fc === lastHit;
+        drawFaceMarker(g, proj, fc, on, size);
+      }
+      g.fillStyle = cssv("--ink");
+      g.font = `600 12px ${cssv("--sans")}`;
+      g.fillText(S.pick === "fix" ? "Click the face that holds the part"
+                                  : "Click the face the load pushes on", 12, 20);
+    } else if (S.fixFace || S.atFace) {
+      if (S.fixFace) drawFaceMarker(g, proj, S.fixFace, false, size, cssv("--good"));
+      if (S.atFace) drawFaceMarker(g, proj, S.atFace, false, size, cssv("--s2"));
+    }
+
+    // load arrows
+    if (atR && S.mag > 0) {
+      const dir = dirVec(S.dir);
+      const pts = arrowAnchors(f, atR, bb);
+      const len = size*0.28;
+      g.strokeStyle = cssv("--s2"); g.fillStyle = cssv("--s2"); g.lineWidth = 2;
+      for (const p0 of pts) {
+        const tip = displace(p0);
+        const tail = [tip[0]-dir[0]*len, tip[1]-dir[1]*len, tip[2]-dir[2]*len];
+        arrow(g, proj, tail, tip, size*0.055);
+      }
+    }
+    // stress raisers, so you can see what the factor is coming from
+    if (S.showKt && r.concentrations && r.concentrations.length) {
+      g.strokeStyle = cssv("--critical"); g.fillStyle = cssv("--critical");
+      g.font = `600 10px ${cssv("--mono")}`;
+      for (const kf of r.concentrations) {
+        const p0 = proj(displace([kf.x, kf.y, (kf.zLo + kf.zHi)/2 || kf.z]));
+        if (!p0) continue;
+        const rr = Math.max(4, Math.min(22, fov*kf.r/Math.max(p0[2],1e-6)));
+        g.globalAlpha = .9; g.lineWidth = 1.6;
+        g.beginPath(); g.arc(p0[0], p0[1], rr, 0, Math.PI*2); g.stroke();
+        g.globalAlpha = 1;
+        g.fillText(`Kt ${kf.kt.toFixed(2)}`, p0[0] + rr + 3, p0[1] + 3);
+      }
+    }
+    // view cube, bottom-left
+    viewCube(g, W, H, ca, sa, ce, se);
+  }
+
+  // One path for a level: every loop, so an even-odd fill punches the holes.
+  function tracePath(g, proj, L, disp) {
+    let any = false;
+    g.beginPath();
+    for (const lp of L.loops) {
+      let started = false;
+      for (let k = 0; k < lp.length; k++) {
+        const p = disp ? disp([lp[k][0], lp[k][1], L.z]) : [lp[k][0], lp[k][1], L.z];
+        const q = proj(p);
+        if (!q) { started = false; continue; }
+        if (!started) { g.moveTo(q[0], q[1]); started = true; any = true; }
+        else g.lineTo(q[0], q[1]);
+      }
+      g.closePath();
+    }
+    return any;
+  }
+
+  function safeRegion(spec, bb) {
+    try { return PS.parseRegion(spec, bb); } catch (e) { return null; }
+  }
+  function dirVec(d) {
+    const m = {"+X":[1,0,0],"-X":[-1,0,0],"+Y":[0,1,0],"-Y":[0,-1,0],"+Z":[0,0,1],"-Z":[0,0,-1]};
+    return m[d] || [0,0,-1];
+  }
+
+  // One arrow for a point load, a spread of them for an area — which is what
+  // the region actually is, so the picture matches the maths.
+  function arrowAnchors(f, R, bb) {
+    const ai = {x:0,y:1,z:2}[R.axis];
+    const inside = [];
+    const st = stackFor(f).stack;
+    for (const L of st) {
+      for (let i = 0; i < L.segs.length; i += 4) {
+        const p = [L.segs[i], L.segs[i+1], L.z];
+        if (p[ai] >= R.lo-1e-9 && p[ai] <= R.hi+1e-9) inside.push(p);
+      }
+    }
+    if (!inside.length) {
+      const c = [(bb[0]+bb[3])/2, (bb[1]+bb[4])/2, (bb[2]+bb[5])/2];
+      c[ai] = (R.lo+R.hi)/2;
+      return [c];
+    }
+    let lo = [Infinity,Infinity,Infinity], hi = [-Infinity,-Infinity,-Infinity];
+    for (const p of inside) for (let k=0;k<3;k++) { lo[k]=Math.min(lo[k],p[k]); hi[k]=Math.max(hi[k],p[k]); }
+    const size = Math.max(bb[3]-bb[0], bb[4]-bb[1], bb[5]-bb[2]) || 1;
+    const spread = Math.max(hi[0]-lo[0], hi[1]-lo[1], hi[2]-lo[2]);
+    if (spread < size*0.12) {           // compact enough to call a point
+      const c = [0,1,2].map(k => inside.reduce((s,p)=>s+p[k],0)/inside.length);
+      return [c];
+    }
+    // sample the region's own material so arrows land on the part
+    const want = 7, out = [], step = inside.length/want;
+    for (let k = 0; k < want; k++) out.push(inside[Math.min(inside.length-1, Math.floor(k*step))]);
+    return out;
+  }
+
+  function arrow(g, proj, tail, tip, head) {
+    const a = proj(tail), b = proj(tip);
+    if (!a || !b) return;
+    g.beginPath(); g.moveTo(a[0],a[1]); g.lineTo(b[0],b[1]); g.stroke();
+    const dx = b[0]-a[0], dy = b[1]-a[1], L = Math.hypot(dx,dy) || 1;
+    const ux = dx/L, uy = dy/L;
+    const hl = Math.max(7, Math.min(16, L*0.32)), hw = hl*0.42;
+    g.beginPath();
+    g.moveTo(b[0], b[1]);
+    g.lineTo(b[0]-ux*hl - uy*hw, b[1]-uy*hl + ux*hw);
+    g.lineTo(b[0]-ux*hl + uy*hw, b[1]-uy*hl - ux*hw);
+    g.closePath(); g.fill();
+  }
+
+  // A face is shown as its patch outline plus a normal stub, which reads as
+  // a face without needing a filled, depth-sorted surface.
+  function drawFaceMarker(g, proj, fc, hot, size, forceCol) {
+    const col = forceCol || (hot ? cssv("--accent") : cssv("--muted"));
+    const c = proj(fc.centroid);
+    if (!c) return;
+    const lo = fc.lo, hi = fc.hi;
+    const V = [];
+    for (const i of [0,1]) for (const j of [0,1]) for (const k of [0,1])
+      V.push([i?hi[0]:lo[0], j?hi[1]:lo[1], k?hi[2]:lo[2]]);
+    const E = [[0,1],[0,2],[0,4],[1,3],[1,5],[2,3],[2,6],[3,7],[4,5],[4,6],[5,7],[6,7]];
+    g.strokeStyle = col; g.lineWidth = hot ? 2 : 1;
+    g.globalAlpha = hot ? 0.95 : (forceCol ? 0.7 : 0.35);
+    g.beginPath();
+    for (const [a,b] of E) {
+      const p = proj(V[a]), q = proj(V[b]);
+      if (p&&q) { g.moveTo(p[0],p[1]); g.lineTo(q[0],q[1]); }
+    }
+    g.stroke();
+    const tip = fc.centroid.map((v,k) => v + fc.normal[k]*size*0.18);
+    const t = proj(tip);
+    if (t) {
+      g.beginPath(); g.moveTo(c[0],c[1]); g.lineTo(t[0],t[1]); g.stroke();
+      g.fillStyle = col; g.globalAlpha = hot ? 1 : 0.6;
+      g.beginPath(); g.arc(t[0], t[1], hot ? 5 : 3, 0, Math.PI*2); g.fill();
+    }
+    g.globalAlpha = 1;
+  }
+
+  function drawRegionBox(g, proj, R, bb, col, alpha) {
+    const ai = {x:0,y:1,z:2}[R.axis];
+    const lo = [bb[0],bb[1],bb[2]], hi = [bb[3],bb[4],bb[5]];
+    lo[ai] = R.lo; hi[ai] = R.hi;
+    const V = [];
+    for (const i of [0,1]) for (const j of [0,1]) for (const k of [0,1])
+      V.push([i?hi[0]:lo[0], j?hi[1]:lo[1], k?hi[2]:lo[2]]);
+    const E = [[0,1],[0,2],[0,4],[1,3],[1,5],[2,3],[2,6],[3,7],[4,5],[4,6],[5,7],[6,7]];
+    g.strokeStyle = col; g.globalAlpha = alpha; g.lineWidth = 1.5;
+    g.beginPath();
+    for (const [a,b] of E) {
+      const p = proj(V[a]), q = proj(V[b]);
+      if (p&&q) { g.moveTo(p[0],p[1]); g.lineTo(q[0],q[1]); }
+    }
+    g.stroke(); g.globalAlpha = 1;
+  }
+
+  // A view cube, not a dropdown: it shows which way you are looking and you
+  // click the face you want. Faces snap to the six orthogonal views, top
+  // corners to the isometrics. It turns with the camera, so it doubles as
+  // the orientation indicator.
+  const CUBE_FACES = [
+    [[0,-1,0], "Front",  0,          0],
+    [[0, 1,0], "Back",   Math.PI,    0],
+    [[1, 0,0], "Right",  Math.PI/2,  0],
+    [[-1,0,0], "Left",  -Math.PI/2,  0],
+    [[0, 0,1], "Top",    0,          Math.PI/2 - 0.001],
+    [[0,0,-1], "Bottom", 0,         -Math.PI/2 + 0.001],
+  ];
+  // Corners of the top face, each snapping to the isometric that looks at it.
+  const CUBE_CORNERS = [
+    [[-1,-1, 1], -Math.PI/4,   ISO],
+    [[ 1,-1, 1],  Math.PI/4,   ISO],
+    [[ 1, 1, 1],  3*Math.PI/4, ISO],
+    [[-1, 1, 1], -3*Math.PI/4, ISO],
+  ];
+
+  function viewCube(g, W, H, ca, sa, ce, se) {
+    const ox = 52, oy = H - 52, R = 25;
+    // orthographic projection with the camera's own rotation
+    const P = p => {
+      const rx = ca*p[0] + sa*p[1], ry = -sa*p[0] + ca*p[1];
+      return {x: ox + rx*R, y: oy - (se*ry + ce*p[2])*R, d: ce*ry - se*p[2]};
+    };
+    cubeTargets = [];
+
+    const faces = CUBE_FACES.map(([n, label, az, el]) => {
+      // the four corners of this face
+      const a = n[0] ? 1 : 0, b = n[1] ? 1 : 0;
+      const quad = [];
+      for (const [u,v] of [[-1,-1],[1,-1],[1,1],[-1,1]]) {
+        if (a) quad.push([n[0], u, v]);
+        else if (b) quad.push([u, n[1], v]);
+        else quad.push([u, v, n[2]]);
+      }
+      const c = P([n[0]*1.001, n[1]*1.001, n[2]*1.001]);
+      return {n, label, az, el, quad, c};
+    }).sort((p,q) => q.c.d - p.c.d);
+
+    const line = cssv("--rule"), faceCol = cssv("--surface-2");
+    g.font = `600 9.5px ${cssv("--sans")}`;
+    g.textAlign = "center"; g.textBaseline = "middle";
+    for (const f of faces) {
+      const pts = f.quad.map(P);
+      const front = f.c.d < 0;
+      g.beginPath();
+      pts.forEach((p,k) => k ? g.lineTo(p.x,p.y) : g.moveTo(p.x,p.y));
+      g.closePath();
+      const hot = cubeHot && cubeHot.label === f.label;
+      g.fillStyle = hot ? cssv("--accent") : faceCol;
+      g.globalAlpha = front ? (hot ? 0.95 : 0.85) : 0.25;
+      g.fill();
+      g.globalAlpha = front ? 0.9 : 0.3;
+      g.strokeStyle = line; g.lineWidth = 1; g.stroke();
+      g.globalAlpha = 1;
+      if (front) {
+        g.fillStyle = hot ? "#fff" : cssv("--ink-2");
+        g.fillText(f.label, f.c.x, f.c.y);
+        cubeTargets.push({x: f.c.x, y: f.c.y, az: f.az, el: f.el, label: f.label, r: 15});
+      }
+    }
+    // isometric corners
+    for (const [v, az, el] of CUBE_CORNERS) {
+      const p = P(v);
+      if (p.d >= 0) continue;
+      const hot = cubeHot && cubeHot.label === "iso" + az.toFixed(2);
+      g.beginPath(); g.arc(p.x, p.y, hot ? 4.5 : 2.6, 0, Math.PI*2);
+      g.fillStyle = hot ? cssv("--accent") : cssv("--muted");
+      g.fill();
+      cubeTargets.push({x: p.x, y: p.y, az, el, label: "iso" + az.toFixed(2), r: 9});
+    }
+    // axis arrows, as the screenshot has alongside the cube
+    g.textAlign = "left";
+    g.font = `500 10px ${cssv("--mono")}`;
+    for (const [v, nm, col] of [[[1,0,0],"X","--s2"],[[0,1,0],"Y","--s3"],[[0,0,1],"Z","--s1"]]) {
+      const p = P([v[0]*1.9, v[1]*1.9, v[2]*1.9]);
+      const o = P([0,0,0]);
+      g.strokeStyle = cssv(col); g.lineWidth = 1.5; g.globalAlpha = .85;
+      g.beginPath(); g.moveTo(o.x, o.y); g.lineTo(p.x, p.y); g.stroke();
+      g.fillStyle = cssv(col);
+      g.fillText(nm, p.x + 2, p.y);
+      g.globalAlpha = 1;
+    }
+    g.textAlign = "start"; g.textBaseline = "alphabetic";
+  }
+
+  // orbit + picking
+  const mouse = {x:null, y:null};
+  let lastHit = null;
+  let drag = null;
+  cv.addEventListener("pointerleave", () => {
+    mouse.x = mouse.y = null;
+    const had = cubeHot; cubeHot = null;
+    if (S.pick || had) frame();
+  });
+  const cubePick = (ev) => {
+    const b = cv.getBoundingClientRect();
+    const x = (ev.clientX - b.left)/b.width * (cv.clientWidth || 640);
+    const y = (ev.clientY - b.top)/b.height * parseFloat(cv.style.height || 320);
+    let best = null, bd = Infinity;
+    for (const t of cubeTargets) {
+      const d = Math.hypot(t.x - x, t.y - y);
+      if (d < t.r && d < bd) { bd = d; best = t; }
+    }
+    return best;
+  };
+  cv.addEventListener("pointerdown", e => {
+    if (cubePick(e)) return;          // clicking the cube, not orbiting
+    drag = {x:e.clientX, y:e.clientY, az:cam.az, el:cam.el};
+    cv.setPointerCapture(e.pointerId); cv.style.cursor = "grabbing";
+  });
+  cv.addEventListener("pointermove", e => {
+    if (drag) {
+      cam.az = drag.az + (e.clientX - drag.x)*0.008;
+      cam.el = Math.max(-1.45, Math.min(1.45, drag.el + (e.clientY - drag.y)*0.008));
+      frame();
+      return;
+    }
+    const hit = cubePick(e);
+    if ((hit && hit !== cubeHot) || (!hit && cubeHot)) {
+      cubeHot = hit;
+      cv.style.cursor = hit ? "pointer" : (S.pick ? "crosshair" : "grab");
+      frame();
+    }
+    if (!S.pick) return;
+    const bb2 = cv.getBoundingClientRect();
+    mouse.x = (e.clientX - bb2.left)/bb2.width * (cv.clientWidth || 640);
+    mouse.y = (e.clientY - bb2.top)/bb2.height * parseFloat(cv.style.height || 320);
+    frame();
+  });
+  const stop = () => { drag = null; cv.style.cursor = "grab"; };
+  cv.addEventListener("pointerup", stop);
+  cv.addEventListener("pointercancel", stop);
+  cv.addEventListener("wheel", e => {
+    e.preventDefault();
+    cam.dist = Math.max(size*0.6, Math.min(size*10, cam.dist * (1 + Math.sign(e.deltaY)*0.12)));
+    frame();
+  }, {passive:false});
+  cv.addEventListener("click", e => {
+    const cube = cubePick(e);
+    if (cube) { cam.az = cube.az; cam.el = cube.el; frame(); return; }
+    if (!S.pick || !lastHit) return;
+    const bbx = r.bbox;
+    if (S.pick === "fix") {
+      S.fixFace = lastHit;
+      S.fix = faceToRegion(lastHit, bbx);
+    } else {
+      S.atFace = lastHit;
+      S.at = faceToRegion(lastHit, bbx);
+      S.dir = faceDirection(lastHit);
+    }
+    S.pick = null;
+    touch(true);
+  });
+  cv.addEventListener("dblclick", () => {
+    cam.az = -0.9; cam.el = 0.42; fitCamera(bb); frame();
+  });
+
+  requestAnimationFrame(frame);
+  window.addEventListener("resize", frame, {once:true});
+
+  if (S.anim && curve) {
+    const tick = () => {
+      if (!S.anim || S.view !== "3d" || !cv.isConnected) { animRaf = 0; return; }
+      frame();
+      animRaf = requestAnimationFrame(tick);
+    };
+    if (animRaf) cancelAnimationFrame(animRaf);
+    animRaf = requestAnimationFrame(tick);
+  } else if (animRaf) { cancelAnimationFrame(animRaf); animRaf = 0; }
+
+  const lg = el("div","legend");
+  const item = (col, text, sq) => {
+    const i = el("span","lg");
+    const s = el("span", sq ? "sq" : "sw"); s.style.background = col;
+    i.append(s, el("span",null,text)); return i;
+  };
+  lg.append(item(cssv("--ink-2"), "part (outer wall, every few layers)"));
+  lg.append(item(cssv("--good"), "held here"));
+  lg.append(item(cssv("--s2"), S.mag > 0 ? `load ${S.mag} ${S.unit} ${S.dir}` : "load"));
+  if (sim) lg.append(item(cssv("--critical"), "section that fails first"));
+  if (S.showKt && r.concentrations && r.concentrations.length)
+    lg.append(item(cssv("--critical"), `${r.concentrations.length} stress raiser`
+      + (r.concentrations.length > 1 ? "s" : "") + " (circled)", true));
+  if (curve) lg.append(item(cssv("--ink-2"), `undeflected shape (ghosted) · ${S.deflScale}× exaggeration`));
+  wrap.append(lg);
+  wrap.append(el("div","note",
+    "Drag to orbit · scroll to zoom · click a cube face for a standard view"));
+  wrap.lastChild.style.marginTop = "5px";
+  return wrap;
+}
+
+// ---- section view ----------------------------------------------------------
+function sectionView(files) {
+  const wrap = el("div");
+  const grid = el("div","sect-grid");
+  const seen = new Set();
+  for (const f of files) {
+    const r = f.result;
+    const pick = (r.sim && !r.sim.error) ? r.sections.load_case
+               : (r.sections[S.axis] || r.sections[r.weakestAxis]);
+    if (!pick) continue;
+    const fig = el("figure");
+    const cap = el("figcaption");
+    const sw = el("span");
+    sw.style.cssText = `width:8px;height:8px;border-radius:2px;flex:none;background:${cssv(SERIES[S.files.indexOf(f)])}`;
+    cap.append(sw, el("span", null,
+      `${f.name} — ${pick.axis.toUpperCase()} cut at ${pick.pos.toFixed(1)} mm · ${pick.area.toFixed(1)} mm² of material`));
+    fig.append(cap, drawSection(pick));
+    for (const it of pick.outline) seen.add(it.f);
+    grid.append(fig);
+  }
+  wrap.append(grid);
+  const lg = el("div","legend");
+  for (const k of FEAT_ORDER) {
+    if (!seen.has(k)) continue;
+    const item = el("span","lg");
+    const sq = el("span","sq"); sq.style.background = cssv(FEAT_COLOR[k] || "--s5");
+    item.append(sq, el("span",null,k)); lg.append(item);
+  }
+  if (lg.children.length) wrap.append(lg);
+  wrap.append(el("div","note",
+    "This is the plane the analysis says gives way first — the walls and infill actually in it, drawn to scale."));
+  wrap.lastChild.style.marginTop = "7px";
+  return wrap;
+}
+function drawSection(sec) {
+  const NS = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(NS,"svg");
+  let x0=Infinity, y0=Infinity, x1=-Infinity, y1=-Infinity;
+  for (const it of sec.outline) {
+    const pad = it.kind === "bead" ? it.w/2 : 0;
+    for (const p of [it.a, it.b]) {
+      x0 = Math.min(x0,p[0]-pad); x1 = Math.max(x1,p[0]+pad);
+      y0 = Math.min(y0,p[1]-pad); y1 = Math.max(y1,p[1]+pad);
+    }
+  }
+  if (!isFinite(x0)) { svg.setAttribute("viewBox","0 0 10 10"); return svg; }
+  const w = Math.max(x1-x0,1e-6), h = Math.max(y1-y0,1e-6);
+  const pad = Math.max(w,h)*0.06;
+  svg.setAttribute("viewBox", `${x0-pad} ${y0-pad} ${w+2*pad} ${h+2*pad}`);
+  svg.setAttribute("preserveAspectRatio","xMidYMid meet");
+  svg.setAttribute("role","img");
+  svg.setAttribute("aria-label", `Cross-section at ${sec.pos.toFixed(1)} mm`);
+  svg.style.cssText = `width:100%;height:auto;max-height:330px;background:var(--surface);
+    border:1px solid var(--rule-2);border-radius:3px`;
+  const g = document.createElementNS(NS,"g");
+  g.setAttribute("transform", `translate(0 ${2*y0 + h}) scale(1 -1)`);
+  svg.append(g);
+  for (const it of sec.outline) {
+    const col = cssv(FEAT_COLOR[it.f] || "--s5");
+    if (it.kind === "bead" || it.kind === "line") {
+      const n = document.createElementNS(NS,"line");
+      n.setAttribute("x1",it.a[0]); n.setAttribute("y1",it.a[1]);
+      n.setAttribute("x2",it.b[0]); n.setAttribute("y2",it.b[1]);
+      n.setAttribute("stroke",col);
+      n.setAttribute("stroke-width", it.kind === "bead" ? it.w : Math.max(w,h)*0.006);
+      n.setAttribute("stroke-linecap", it.kind === "bead" ? "round" : "butt");
+      n.setAttribute("fill","none");
+      g.append(n);
+    } else {
+      const n = document.createElementNS(NS,"rect");
+      n.setAttribute("x", Math.min(it.a[0],it.b[0]));
+      n.setAttribute("y", Math.min(it.a[1],it.b[1]));
+      n.setAttribute("width", Math.abs(it.b[0]-it.a[0]));
+      n.setAttribute("height", Math.abs(it.b[1]-it.a[1]));
+      n.setAttribute("fill",col);
+      g.append(n);
+    }
+  }
+  return svg;
+}
+
+// ---- all axes --------------------------------------------------------------
+function axisTable(files) {
+  const scroll = el("div","tbl-scroll");
+  const t = el("table");
+  const thead = el("thead"), hr = el("tr");
+  for (const c of ["","axis","breaks at","applied","section","stiffness EI","in tension"])
+    hr.append(el("th",null,c));
+  thead.append(hr); t.append(thead);
+  const tb = el("tbody");
+  for (const f of files) {
+    const r = f.result;
+    for (const a of ["z","x","y"]) {
+      const d = r.axes[a];
+      if (!d) continue;
+      const tr = el("tr");
+      if (a === r.weakestAxis) tr.className = "gov";
+      const c0 = el("td");
+      if (files.length > 1) {
+        const sw = el("span");
+        sw.style.cssText = `display:inline-block;width:8px;height:8px;border-radius:2px;background:${cssv(SERIES[S.files.indexOf(f)])}`;
+        c0.append(sw);
+      }
+      tr.append(c0, el("td", null, a.toUpperCase() + (a === r.weakestAxis ? "  ← governs" : "")));
+      for (const c of [
+        d.breakN ? `${fmtN(d.breakN)} (${kgf(d.breakN)})` : "—",
+        d.armMm != null ? `${d.armMm.toFixed(0)} mm out` : "—",
+        `${d.area.toFixed(1)} mm²`,
+        d.EI ? `${sig(d.EI)} N·m²` : "—",
+        fmtN(d.tensionN)]) tr.append(el("td","n",c));
+      tb.append(tr);
+    }
+  }
+  t.append(tb); scroll.append(t);
+  const wrap = el("div");
+  wrap.append(scroll);
+  const adv = adviceList();
+  if (adv.length) {
+    const p = el("div"); p.style.marginTop = "14px";
+    const ul = el("ul","advice");
+    for (const a of adv) ul.append(el("li",null,a));
+    p.append(ul); wrap.append(p);
+  }
+  return wrap;
+}
+
+// ---- advice ----------------------------------------------------------------
+function adviceList() {
+  const items = [], warns = [], files = allOk();
+  if (!files.length) return [];
+  const r = files[0].result, m = r.material;
+  if (files.length === 2) {
+    const [a,b] = files;
+    const ea = a.result.axes.z && a.result.axes.z.EI, eb = b.result.axes.z && b.result.axes.z.EI;
+    if (ea && eb && Math.max(ea,eb)/Math.min(ea,eb) > 2) {
+      const stiff = ea > eb ? a : b, soft = ea > eb ? b : a;
+      items.push(`${stiff.name} is ${(Math.max(ea,eb)/Math.min(ea,eb)).toFixed(0)}× stiffer in bending than ${soft.name}, from orientation alone. No slicer setting recovers a gap that size.`);
+    }
+  }
+  for (const f of files) {
+    const rr = f.result, sim = rr.sim, tag = files.length > 1 ? `${f.name}: ` : "";
+    if (sim && sim.error) warns.push(tag + sim.error);
+    if (sim && !sim.error) {
+      if (sim.worst.noTorsionPath) warns.push(tag + "the governing section has no closed wall to carry torsion — it will unwind rather than resist.");
+      if (sim.worst.shearGoverns) items.push(tag + "shear dominates here, not bending — the load path is too short to develop much moment.");
+      else if (sim.worst.torsionGoverns) items.push(tag + `torsion dominates at the governing section, carried by the ${sim.worst.torsionModel}.`);
+      if (sim.deflBent && sim.deflection > 0.05) warns.push(tag + `deflection counts the ${sim.deflAxis.toUpperCase()} run only — the load path turns a corner, so the real figure is larger.`);
+      if (sim.peakTorsion && sim.peakTorsion.sec !== sim.worst.sec)
+        items.push(`${tag}torsion peaks away from the governing section: ${sig(sim.peakTorsion.tauTorsion)} MPa at ${sim.peakTorsion.axis.toUpperCase()} = ${sim.peakTorsion.sec.pos.toFixed(1)} mm.`);
+    }
+    for (const a of ["x","y","z"]) {
+      const d = rr.axes[a];
+      if (d && d.stiffnessGoverns)
+        items.push(`${tag}on ${a.toUpperCase()} the part flexes past your limit before it breaks — design to a deflection limit, not a breaking load.`);
+    }
+    for (const w of rr.warnings) warns.push(tag + w);
+  }
+  // Strip the stress concentration back out: anisotropy is the material's,
+  // and a hole on one axis' critical section would otherwise pose as it.
+  const bare = a => (r.axes[a] ? r.axes[a].sigma * (r.axes[a].critical.kf || 1) : 0);
+  const zs = r.axes.z && bare("z");
+  const ip = Math.max(...["x","y"].map(bare));
+  if (zs && ip && ip/zs > 1.25) {
+    const line = `${m.name} is ${(ip/zs).toFixed(1)}× weaker across layers than in-plane (${zs.toFixed(0)} vs ${ip.toFixed(0)} MPa at the critical sections).`;
+    items.push(r.weakestAxis === "z"
+      ? line + " Z is also what governs, so reorienting to put the load in the print plane is the biggest win available and costs nothing."
+      : line + " Z is not what governs here, so orientation is already working in your favour.");
+  }
+  if (r.concentrations && r.concentrations.length) {
+    const worst = r.concentrations[0];
+    const kf = 1 + r.notchSensitivity*(worst.kt-1);
+    items.push(`A ${worst.kind} ${worst.size.toFixed(1)} mm across raises the local stress by `
+      + `Kt ${worst.kt.toFixed(2)}; in ${m.name} the part feels Kf ${kf.toFixed(2)} of that. `
+      + (worst.kind === "hole"
+         ? "Moving the hole away from the highest-moment section, or growing the material around it, buys more than any slicer setting."
+         : "Filleting that corner is the cheapest strength you will ever buy — Kt falls with the square root of the root radius."));
+  }
+  if (m.elong <= 4) items.push("Brittle material: it fails suddenly and is sensitive to sharp internal corners. A 2 mm fillet in a re-entrant corner is often worth more than any slicer setting.");
+  if (m.z <= 0.45) items.push(`${m.name} has poor layer adhesion (${(m.z*100).toFixed(0)}%). Raise nozzle temperature 10–15 °C, cut part cooling on internal walls, and use a chamber if you have one.`);
+  if (r.derating.thermal < 0.9)
+    items.push(`At ${S.temp} °C the material keeps only ${(r.derating.thermal*100).toFixed(0)}% of its strength. ${r.derating.thermalNote}`);
+  items.push("Sustained load is not the same as peak load: these polymers creep. For a part under constant stress, design to roughly half these numbers.");
+  return warns.concat(items);
+}
+
+// open on a worked example rather than an empty shell
+addFile(SAMPLES["bracket — printed upright"].name, SAMPLES["bracket — printed upright"].make());
+S.ran = true; S.reached.results = true; S.reached.fixtures = true;
+S.reached.loads = true; S.reached.material = true; S.reached.run = true;
+S.step = "results";
+refresh();
+})();
+</script>

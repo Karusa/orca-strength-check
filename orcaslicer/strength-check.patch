@@ -1,0 +1,1558 @@
+diff --git a/docs/HLSD/strength-analysis.md b/docs/HLSD/strength-analysis.md
+new file mode 100644
+index 000000000..378e2c5f7
+--- /dev/null
++++ b/docs/HLSD/strength-analysis.md
+@@ -0,0 +1,97 @@
++# Strength check — High Level Design
++
++## Purpose and scope
++
++The strength check answers "will this printed part hold this load?" before the
++part is printed. The user paints where the part is held (fixture) and where the
++load is applied, aims the load with an arrow, enters it in kg, lb or N, and gets
++a safety factor, the weakest cut, its stress and the deflection at the load.
++
++It is an estimate, not FEA. It is meant to catch the common failures of printed
++parts: layers splitting under bending, too few walls, sparse infill and holes.
++The slicer already knows the part's orientation on the plate and its print
++settings, so the check uses both instead of asking the user for them.
++
++The load case is a what-if check, not a print setting. It changes neither the
++model, G-code nor the project file, and it never schedules background
++processing.
++
++## Components
++
++- `libslic3r/Feature/StrengthAnalysis` holds the analysis: `analyse()` takes the
++  object mesh and painted facets in world coordinates, a force vector, material
++  properties and the print settings that matter. It has no GUI dependencies, and
++  it is covered by `tests/libslic3r/test_strength_analysis.cpp`.
++- `GLGizmoStrength` is a painter gizmo. The left button paints the fixture
++  (`EnforcerBlockerType::ENFORCER`), the right button paints the load (`BLOCKER`),
++  and Shift erases. The Face tool (smart fill) selects whole faces, which is what
++  a fixture or a load usually covers.
++
++## Load case state
++
++Paint is held in the gizmo, keyed by `ModelObject` id, one
++`TriangleSplittingData` per model part, together with the part's facet count.
++Paint whose facet count no longer matches the mesh is dropped rather than
++applied to different triangles. Paint, direction, magnitude and unit go through
++the gizmo's `on_save`/`on_load`, so undo and redo work while the gizmo is open.
++Nothing is written to `ModelVolume`, so `.3mf` files, slicing and the
++`FacetsAnnotation` users are untouched.
++
++The arrow's tip sits on the centroid of the painted load area, and it points
++along the force. Dragging the arrow swings its tail over a sphere around the
++load point, like a trackball, with rotate-gizmo rings showing that sphere. The
++direction snaps to an axis within 4°. Preset buttons and X/Y/Z fields set the
++direction exactly. Any edit after a run marks the results out of date until the
++next Analyze.
++
++## Analysis
++
++The object is cut by planes normal to X, Y and Z at layer-height spacing, using
++`slice_mesh_ex` on a cyclically permuted copy of the mesh for X and Y. A cyclic
++permutation keeps handedness, so contour orientation stays valid. Only cuts that
++separate the fixture from the load are made. A cut separates them when the
++fixture's extent along that axis lies entirely on one side of it and the load
++point on the other. A fixture straddling a cut means the load reaches ground
++without crossing it.
++
++For each such cut the part beyond it is a free body, so the internal force is the
++applied force and the internal moment is `r × F` about the cut's centroid. This
++is exact for a statically determinate single load, whatever the shape of the
++load path. The cut's area, centroid, second moments and extreme fibre distances
++come from Green's theorem over the ExPolygon loops.
++
++A mesh is solid but a print is not. Each cut is filled as printed: wall loops of
++the inner wall line width around its boundary, and sparse infill density inside.
++Area and second moments are scaled by that fraction. Torsion uses a
++Saint-Venant solid above 85% fill and a Bredt closed shell below.
++
++Stress at a cut is the axial stress, plus bending about both in-plane axes,
++combined by von Mises with transverse shear (1.5 V/A) and torsional shear. The
++two kinds of shear are added, which is conservative. Allowable stress is the
++filament's tensile strength:
++
++- times its layer-adhesion factor for a Z cut, which runs between layers
++- times that factor plus 0.15 (at most 1) for an X or Y cut, which runs across
++  beads
++- divided by the fatigue notch factor `Kf = 1 + q(Kt − 1)` where the cut passes
++  a hole
++
++`Kt` is Peterson's fit for a hole in a finite strip, measured from the ligament
++to the outer contour. `q` falls from 1 for brittle filaments (elongation ≤ 5%)
++to 0.4 for ductile ones. The cut with the lowest safety factor is reported.
++
++Deflection at the load point uses the unit-load method, integrating
++`m·M / EI` along the axis on which the load sits furthest from the fixture.
++
++## Materials
++
++`find_material()` maps a profile's `filament_type` to strength, modulus,
++layer-adhesion factor and elongation. The values are typical of reasonably tuned
++prints. Unknown types fall back to PLA, and the results panel says so. The
++object's own settings override the presets, as they do when slicing.
++
++## Limits
++
++Beam theory assumes slender load paths and one load. Stocky blocks, contact
++stresses, buckling, creep and print defects are out of scope. An L-shaped path
++is handled for stress, but its deflection counts only the longest run.
+diff --git a/resources/images/toolbar_strength.svg b/resources/images/toolbar_strength.svg
+new file mode 100644
+index 000000000..3cbe4b067
+--- /dev/null
++++ b/resources/images/toolbar_strength.svg
+@@ -0,0 +1 @@
++<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40"><path d="M5,5h2v30h-2z" style="fill:#2b3436"/><path d="M7,8l-3,3M7,14l-3,3M7,20l-3,3M7,26l-3,3M7,32l-3,3" style="fill:none;stroke:#2b3436;stroke-width:1"/><path d="M7,17.5h21.5a1,1,0,0,1,1,1v3a1,1,0,0,1-1,1h-21.5z" style="fill:none;stroke:#2b3436;stroke-width:1"/><path d="M27.5,4v9" style="fill:none;stroke:#009688;stroke-width:1.5"/><path d="M24,11.5l3.5,5l3.5,-5z" style="fill:#009688"/><path d="M7,26c8,0.5,15,2.5,21,6" style="fill:none;stroke:#009688;stroke-width:1;stroke-dasharray:2,1.5"/></svg>
+diff --git a/resources/images/toolbar_strength_dark.svg b/resources/images/toolbar_strength_dark.svg
+new file mode 100644
+index 000000000..11e886268
+--- /dev/null
++++ b/resources/images/toolbar_strength_dark.svg
+@@ -0,0 +1 @@
++<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40"><path d="M5,5h2v30h-2z" style="fill:#b6b6b6"/><path d="M7,8l-3,3M7,14l-3,3M7,20l-3,3M7,26l-3,3M7,32l-3,3" style="fill:none;stroke:#b6b6b6;stroke-width:1"/><path d="M7,17.5h21.5a1,1,0,0,1,1,1v3a1,1,0,0,1-1,1h-21.5z" style="fill:none;stroke:#b6b6b6;stroke-width:1"/><path d="M27.5,4v9" style="fill:none;stroke:#009688;stroke-width:1.5"/><path d="M24,11.5l3.5,5l3.5,-5z" style="fill:#009688"/><path d="M7,26c8,0.5,15,2.5,21,6" style="fill:none;stroke:#009688;stroke-width:1;stroke-dasharray:2,1.5"/></svg>
+diff --git a/src/libslic3r/CMakeLists.txt b/src/libslic3r/CMakeLists.txt
+index 185741246..da660dbc7 100644
+--- a/src/libslic3r/CMakeLists.txt
++++ b/src/libslic3r/CMakeLists.txt
+@@ -139,6 +139,8 @@ set(lisbslic3r_sources
+     FaceDetector.hpp
+     Feature/FuzzySkin/FuzzySkin.cpp
+     Feature/FuzzySkin/FuzzySkin.hpp
++    Feature/StrengthAnalysis/StrengthAnalysis.cpp
++    Feature/StrengthAnalysis/StrengthAnalysis.hpp
+     Feature/Interlocking/InterlockingGenerator.cpp
+     Feature/Interlocking/InterlockingGenerator.hpp
+     Feature/Interlocking/VoxelUtils.cpp
+diff --git a/src/libslic3r/Feature/StrengthAnalysis/StrengthAnalysis.cpp b/src/libslic3r/Feature/StrengthAnalysis/StrengthAnalysis.cpp
+new file mode 100644
+index 000000000..278d94244
+--- /dev/null
++++ b/src/libslic3r/Feature/StrengthAnalysis/StrengthAnalysis.cpp
+@@ -0,0 +1,399 @@
++#include "StrengthAnalysis.hpp"
++
++#include "libslic3r/ExPolygon.hpp"
++#include "libslic3r/I18N.hpp"
++#include "libslic3r/TriangleMesh.hpp"
++#include "libslic3r/TriangleMeshSlicer.hpp"
++
++#include <boost/algorithm/string/case_conv.hpp>
++#include <boost/algorithm/string/trim.hpp>
++
++#include <algorithm>
++#include <array>
++#include <cmath>
++#include <optional>
++
++namespace Slic3r::Feature::StrengthAnalysis {
++
++namespace {
++
++// Typical values for reasonably tuned prints. z_factor is what layer adhesion keeps.
++constexpr std::array<Material, 22> MATERIALS{{
++    {"PLA", 50, 3500, 0.55, 4},      {"PLA+", 45, 3000, 0.62, 8},    {"PLA-CF", 48, 5500, 0.42, 2},
++    {"PETG", 45, 2100, 0.72, 12},    {"PETG-CF", 60, 5000, 0.50, 4}, {"ABS", 38, 2100, 0.45, 15},
++    {"ASA", 42, 2200, 0.45, 14},     {"ABS-CF", 55, 5500, 0.35, 3},  {"PC", 62, 2300, 0.42, 8},
++    {"PC-CF", 85, 6000, 0.35, 3},    {"PA6", 55, 1600, 0.55, 25},    {"PA12", 48, 1400, 0.60, 30},
++    {"PA-CF", 95, 6500, 0.35, 4},    {"PA-GF", 80, 5000, 0.40, 5},   {"PPA-CF", 130, 9000, 0.35, 3},
++    {"PET-CF", 90, 6000, 0.38, 3},   {"PP", 25, 1300, 0.60, 40},     {"TPU", 28, 60, 0.80, 400},
++    {"HIPS", 25, 1900, 0.50, 20},    {"PEEK", 95, 4000, 0.45, 20},   {"PPS-CF", 90, 8000, 0.40, 3},
++    {"PCTG", 45, 1900, 0.75, 15},
++}};
++
++// filament_type spellings found in the bundled profiles that share a row above.
++constexpr std::array<std::pair<const char *, const char *>, 12> ALIASES{{
++    {"PA", "PA6"},          {"PAHT", "PA6"},        {"PA-HT", "PA6"},   {"PA6-CF", "PA-CF"},
++    {"PA12-CF", "PA-CF"},   {"PAHT-CF", "PA-CF"},   {"PA6-GF", "PA-GF"}, {"PPS", "PPS-CF"},
++    {"ASA-CF", "ABS-CF"},   {"ABS-GF", "ABS-CF"},   {"TPU-AMS", "TPU"}, {"PLA-AERO", "PLA"},
++}};
++
++constexpr double KT_CAP            = 6.;
++constexpr double SHEAR_PEAK        = 1.5;  // peak / mean transverse shear, rectangular section
++constexpr double SOLID_THRESHOLD   = 0.85; // printed / enclosed area above which torsion sees a solid
++constexpr double TRIM              = 0.01; // ends of the part left uncut, as a fraction of its span
++constexpr int    MAX_CUTS_PER_AXIS = 600;
++constexpr int    HOLE_PROBE_CUTS   = 12;
++constexpr double MIN_HOLE_RADIUS   = 0.3;
++
++struct Section
++{
++    int    axis = 2;
++    double pos  = 0.;
++    Vec3d  centroid;
++    double area = 0.;      // printed material, mm^2
++    double S_u = 0., S_v = 0.; // section moduli resisting moments about the in-plane axes u, v
++    double I_u = 0., I_v = 0.;
++    double Q = 0.;         // torsional section modulus, mm^3
++    double strength = 0.;  // MPa after anisotropy and notch factor
++    double kt = 1.;
++};
++
++struct Hole
++{
++    Vec2d  center; // world X, Y
++    double radius;
++    double kt;
++};
++
++int u_of(int axis) { return (axis + 1) % 3; }
++int v_of(int axis) { return (axis + 2) % 3; }
++
++// Cyclic permutation so that `axis` becomes Z. Being cyclic it keeps handedness,
++// hence contour orientation.
++indexed_triangle_set axis_to_z(const indexed_triangle_set &its, int axis)
++{
++    indexed_triangle_set out = its;
++    if (axis != 2)
++        for (stl_vertex &p : out.vertices)
++            p = stl_vertex(p[u_of(axis)], p[v_of(axis)], p[axis]);
++    return out;
++}
++
++double triangle_area(const indexed_triangle_set &its, const Vec3i32 &f)
++{
++    const Vec3d a = its.vertices[f[0]].cast<double>(), b = its.vertices[f[1]].cast<double>(), c = its.vertices[f[2]].cast<double>();
++    return 0.5 * (b - a).cross(c - a).norm();
++}
++
++// Extent of the facets only: a facet set may share the vertex list of the whole mesh.
++BoundingBoxf3 facets_bounding_box(const indexed_triangle_set &its)
++{
++    BoundingBoxf3 bbox;
++    for (const Vec3i32 &f : its.indices)
++        for (int v : f)
++            bbox.merge(its.vertices[v].cast<double>());
++    return bbox;
++}
++
++// Is a cut normal to `axis` at `pos` between the fixture and the load? If the
++// fixture straddles the cut, the load reaches ground without crossing it.
++bool separates(const BoundingBoxf3 &fixture, int axis, double pos, const Vec3d &load_point)
++{
++    if (fixture.min[axis] > pos)
++        return load_point[axis] < pos;
++    if (fixture.max[axis] < pos)
++        return load_point[axis] > pos;
++    return false;
++}
++
++double distance_to_polygon(const Vec2d &p, const Polygon &poly)
++{
++    double best = std::numeric_limits<double>::max();
++    for (size_t i = 0; i < poly.points.size(); ++i) {
++        const Vec2d a = unscale(poly.points[i]), b = unscale(poly.points[(i + 1) % poly.points.size()]);
++        const Vec2d ab = b - a;
++        const double t = std::clamp(ab.squaredNorm() > 0. ? (p - a).dot(ab) / ab.squaredNorm() : 0., 0., 1.);
++        best = std::min(best, (a + t * ab - p).norm());
++    }
++    return best;
++}
++
++// Holes in one cut, with the net-section stress concentration each causes.
++std::vector<Hole> holes_of(const ExPolygons &cut)
++{
++    std::vector<Hole> out;
++    for (const ExPolygon &ex : cut)
++        for (const Polygon &hole : ex.holes) {
++            const double r = std::sqrt(std::abs(unscaled<double>(unscaled<double>(hole.area()))) / PI);
++            if (r < MIN_HOLE_RADIUS)
++                continue;
++            const Vec2d  c        = unscale(hole.centroid());
++            const double ligament = distance_to_polygon(c, ex.contour) - r;
++            if (ligament > 0.)
++                out.push_back({c, r, kt_hole(2. * r, 2. * r + 2. * ligament)});
++        }
++    return out;
++}
++
++// Gross geometry of a cut in its own plane (u, v), by Green's theorem over every loop.
++struct CutGeometry
++{
++    double area = 0., enclosed = 0., perimeter = 0., outer_perimeter = 0.;
++    Vec2d  centroid = Vec2d::Zero();
++    double I_u = 0., I_v = 0., c_u = 0., c_v = 0.;
++};
++
++std::optional<CutGeometry> geometry_of(const ExPolygons &cut)
++{
++    CutGeometry g;
++    double   su = 0., sv = 0., iu = 0., iv = 0.;
++    auto     add_loop = [&](const Polygon &poly, bool outer) {
++        for (size_t i = 0; i < poly.points.size(); ++i) {
++            const Vec2d  a = unscale(poly.points[i]), b = unscale(poly.points[(i + 1) % poly.points.size()]);
++            const double cr = a.x() * b.y() - b.x() * a.y();
++            g.area += 0.5 * cr;
++            su += (a.x() + b.x()) * cr;
++            sv += (a.y() + b.y()) * cr;
++            iu += (a.y() * a.y() + a.y() * b.y() + b.y() * b.y()) * cr;
++            iv += (a.x() * a.x() + a.x() * b.x() + b.x() * b.x()) * cr;
++            const double len = (b - a).norm();
++            g.perimeter += len;
++            if (outer)
++                g.outer_perimeter += len;
++        }
++    };
++    for (const ExPolygon &ex : cut) {
++        add_loop(ex.contour, true);
++        g.enclosed += unscaled<double>(unscaled<double>(ex.contour.area()));
++        for (const Polygon &h : ex.holes)
++            add_loop(h, false);
++    }
++    if (g.area <= 1e-6)
++        return std::nullopt;
++    g.centroid = Vec2d(su, sv) / (6. * g.area);
++    g.I_u      = std::max(0., iu / 12. - g.area * sqr(g.centroid.y()));
++    g.I_v      = std::max(0., iv / 12. - g.area * sqr(g.centroid.x()));
++    for (const ExPolygon &ex : cut)
++        for (const Point &p : ex.contour.points) {
++            const Vec2d d = unscale(p) - g.centroid;
++            g.c_u         = std::max(g.c_u, std::abs(d.x()));
++            g.c_v         = std::max(g.c_v, std::abs(d.y()));
++        }
++    return g;
++}
++
++std::vector<Section> cut_axis(const indexed_triangle_set &mesh, int axis, const BoundingBoxf3 &bbox, const BoundingBoxf3 &fixture,
++                              const Vec3d &load_point, const std::vector<Hole> &holes, const Material &mat, const PrintSettings &print)
++{
++    const double span = bbox.size()[axis] * (1. - 2. * TRIM);
++    if (span <= 1e-6)
++        return {};
++    const double lo = bbox.min[axis] + bbox.size()[axis] * TRIM;
++    const int    n  = std::clamp(int(std::round(span / std::max(print.layer_height, 0.01))), 4, MAX_CUTS_PER_AXIS);
++
++    std::vector<float> zs;
++    for (int i = 0; i < n; ++i)
++        if (const double pos = lo + span * i / (n - 1); separates(fixture, axis, pos, load_point))
++            zs.push_back(float(pos));
++    if (zs.empty())
++        return {};
++
++    const std::vector<ExPolygons> cuts     = slice_mesh_ex(axis_to_z(mesh, axis), zs);
++    const double                  q        = notch_sensitivity(mat.elongation);
++    // Across layers only adhesion holds; along a vertical cut the beads carry most of it.
++    const double                  strength = mat.uts * (axis == 2 ? mat.z_factor : std::min(1., mat.z_factor + 0.15));
++    const double                  shell    = std::max(0, print.wall_loops) * print.wall_width;
++
++    std::vector<Section> out;
++    for (size_t i = 0; i < cuts.size(); ++i) {
++        const std::optional<CutGeometry> g = geometry_of(cuts[i]);
++        if (!g)
++            continue;
++        // A mesh is solid; the print is walls around the boundary plus sparse infill inside.
++        const double wall_area = std::min(g->area, g->perimeter * shell);
++        const double printed   = wall_area + std::clamp(print.infill, 0., 1.) * (g->area - wall_area);
++        const double frac      = printed / g->area;
++
++        Section s;
++        s.axis              = axis;
++        s.pos               = zs[i];
++        s.centroid[axis]    = zs[i];
++        s.centroid[u_of(axis)] = g->centroid.x();
++        s.centroid[v_of(axis)] = g->centroid.y();
++        s.area              = printed;
++        s.I_u               = g->I_u * frac;
++        s.I_v               = g->I_v * frac;
++        s.S_u               = g->c_v > 0. ? s.I_u / g->c_v : 0.;
++        s.S_v               = g->c_u > 0. ? s.I_v / g->c_u : 0.;
++        if (frac >= SOLID_THRESHOLD)
++            s.Q = 0.2 * std::pow(printed, 1.5);              // compact solid, Saint-Venant
++        else if (g->outer_perimeter > 0.)
++            s.Q = 2. * g->enclosed * std::min(shell, g->area / g->outer_perimeter); // closed thin-walled shell, Bredt
++
++        if (axis == 2) {
++            for (const Hole &h : holes_of(cuts[i]))
++                s.kt = std::max(s.kt, h.kt);
++        } else {
++            for (const Hole &h : holes)
++                if (std::abs(h.center[axis] - s.pos) <= h.radius)
++                    s.kt = std::max(s.kt, h.kt);
++        }
++        s.strength = strength / (1. + q * (s.kt - 1.));
++        out.push_back(s);
++    }
++    return out;
++}
++
++// Holes through the part seen from above, for the cuts that pass through them sideways.
++std::vector<Hole> probe_holes(const indexed_triangle_set &mesh, const BoundingBoxf3 &bbox)
++{
++    std::vector<float> zs;
++    for (int k = 0; k < HOLE_PROBE_CUTS; ++k)
++        zs.push_back(float(bbox.min.z() + bbox.size().z() * (k + 0.5) / HOLE_PROBE_CUTS));
++    std::vector<Hole> out;
++    for (const ExPolygons &cut : slice_mesh_ex(mesh, zs))
++        for (const Hole &h : holes_of(cut))
++            if (std::none_of(out.begin(), out.end(), [&h](const Hole &o) { return (o.center - h.center).norm() < 1.; }))
++                out.push_back(h);
++    return out;
++}
++
++// Deflection at the load point by the unit-load method, integrated along the axis
++// on which the load sits furthest from the fixture.
++double deflection(const std::vector<Section> &sections, const Vec3d &load_point, const Vec3d &fixture_center, const Vec3d &force, double modulus)
++{
++    int dom = 0;
++    for (int a = 1; a < 3; ++a)
++        if (std::abs(load_point[a] - fixture_center[a]) > std::abs(load_point[dom] - fixture_center[dom]))
++            dom = a;
++    std::vector<const Section *> run;
++    for (const Section &s : sections)
++        if (s.axis == dom)
++            run.push_back(&s);
++    if (run.size() < 2 || modulus <= 0.)
++        return 0.;
++    const Vec3d dir   = force.normalized();
++    double      total = 0.;
++    for (size_t k = 0; k < run.size(); ++k) {
++        const double ds = std::abs(run[std::min(k + 1, run.size() - 1)]->pos - run[k > 0 ? k - 1 : 0]->pos) /
++                          (k == 0 || k + 1 == run.size() ? 1. : 2.);
++        const Vec3d m = (load_point - run[k]->centroid).cross(dir);
++        if (run[k]->I_u > 0.)
++            total += sqr(m[u_of(dom)]) / run[k]->I_u * ds;
++        if (run[k]->I_v > 0.)
++            total += sqr(m[v_of(dom)]) / run[k]->I_v * ds;
++    }
++    return force.norm() * total / modulus;
++}
++
++} // namespace
++
++std::optional<Vec3d> area_centroid(const indexed_triangle_set &its)
++{
++    Vec3d  sum   = Vec3d::Zero();
++    double total = 0.;
++    for (const Vec3i32 &f : its.indices) {
++        const double a = triangle_area(its, f);
++        sum += a * (its.vertices[f[0]] + its.vertices[f[1]] + its.vertices[f[2]]).cast<double>() / 3.;
++        total += a;
++    }
++    if (total <= 0.)
++        return std::nullopt;
++    return sum / total;
++}
++
++const Material &default_material() { return MATERIALS.front(); }
++
++const Material *find_material(const std::string &filament_type)
++{
++    std::string key = boost::algorithm::to_upper_copy(boost::algorithm::trim_copy(filament_type));
++    std::replace(key.begin(), key.end(), ' ', '-');
++    for (const auto &[alias, name] : ALIASES)
++        if (key == alias)
++            key = name;
++    for (const Material &m : MATERIALS)
++        if (key == m.name)
++            return &m;
++    return nullptr;
++}
++
++double kt_hole(double d, double w)
++{
++    if (d <= 0. || w <= d)
++        return 1.;
++    const double x = std::min(d / w, 0.5);
++    return std::max(1., 3. - 3.13 * x + 3.66 * x * x - 1.53 * x * x * x);
++}
++
++double notch_sensitivity(double elongation)
++{
++    return elongation <= 5. ? 1. : std::max(0.4, 1. - (elongation - 5.) / 60.);
++}
++
++Result analyse(const indexed_triangle_set &mesh, const LoadCase &lc, const Material &mat, const PrintSettings &print)
++{
++    Result res;
++    const std::optional<Vec3d> load_point     = area_centroid(lc.load);
++    const std::optional<Vec3d> fixture_center = area_centroid(lc.fixture);
++    if (!fixture_center) {
++        res.error = _u8L("Paint where the part is held.");
++        return res;
++    }
++    if (!load_point) {
++        res.error = _u8L("Paint where the load is applied.");
++        return res;
++    }
++    if (lc.force.norm() <= 0.) {
++        res.error = _u8L("Enter a load greater than zero.");
++        return res;
++    }
++    res.load_point = *load_point;
++
++    const BoundingBoxf3 bbox    = bounding_box(mesh);
++    const BoundingBoxf3 fixture = facets_bounding_box(lc.fixture);
++    const std::vector<Hole> holes = probe_holes(mesh, bbox);
++
++    std::vector<Section> sections;
++    for (int axis : {2, 0, 1}) {
++        std::vector<Section> cut = cut_axis(mesh, axis, bbox, fixture, *load_point, holes, mat, print);
++        sections.insert(sections.end(), cut.begin(), cut.end());
++    }
++
++    const Vec3d &F = lc.force;
++    double       worst_sf = std::numeric_limits<double>::max();
++    for (const Section &s : sections) {
++        const int    a = s.axis, u = u_of(a), v = v_of(a);
++        const Vec3d  M = (*load_point - s.centroid).cross(F); // N.mm
++        const double bending = (s.S_u > 0. ? std::abs(M[u]) / s.S_u : 0.) + (s.S_v > 0. ? std::abs(M[v]) / s.S_v : 0.);
++        const double axial   = std::abs(F[a]) / s.area;
++        const double tau_v   = SHEAR_PEAK * std::hypot(F[u], F[v]) / s.area;
++        // A section with no closed loop of wall has next to no torsional strength.
++        const double tau_t = s.Q > 0. ? std::abs(M[a]) / s.Q : (std::abs(M[a]) > 1e-9 ? std::numeric_limits<double>::infinity() : 0.);
++        const double sigma = bending + axial;
++        // Shear peaks of the two kinds sit at different points, so adding them is conservative.
++        const double tau = tau_v + tau_t;
++        const double vm  = std::sqrt(sigma * sigma + 3. * tau * tau);
++        if (vm <= 1e-12)
++            continue;
++        const double sf = s.strength / vm;
++        if (sf < worst_sf) {
++            worst_sf           = sf;
++            res.safety_factor  = sf;
++            res.stress         = vm;
++            res.allowable      = s.strength;
++            res.kt             = s.kt;
++            res.axis           = a;
++            res.critical_point = s.centroid;
++            res.mode           = 3. * tau * tau > sigma * sigma ? (tau_t > tau_v ? Mode::Torsion : Mode::Shear) :
++                                                                  (axial > bending ? Mode::Tension : Mode::Bending);
++        }
++    }
++    if (worst_sf == std::numeric_limits<double>::max()) {
++        res.error = _u8L("No cut through the part separates the fixture from the load, so the load reaches the fixture "
++                         "without stressing the part. Paint a smaller fixture or load another area.");
++        return res;
++    }
++    res.deflection = deflection(sections, *load_point, *fixture_center, F, mat.modulus);
++    return res;
++}
++
++} // namespace Slic3r::Feature::StrengthAnalysis
+diff --git a/src/libslic3r/Feature/StrengthAnalysis/StrengthAnalysis.hpp b/src/libslic3r/Feature/StrengthAnalysis/StrengthAnalysis.hpp
+new file mode 100644
+index 000000000..4122dd05e
+--- /dev/null
++++ b/src/libslic3r/Feature/StrengthAnalysis/StrengthAnalysis.hpp
+@@ -0,0 +1,77 @@
++#pragma once
++
++#include "libslic3r/Point.hpp"
++
++#include <admesh/stl.h>
++
++#include <optional>
++#include <string>
++
++// Quick strength estimate of a printed part under one painted load case.
++//
++// This is beam theory on the part's real cross-sections, not FEA: every cut that
++// separates the painted fixture from the painted load carries the load's moment
++// about the cut's centroid, and its stress is checked against the strength of a
++// printed section (walls + infill, weaker across layers, knocked down at holes).
++// See docs/HLSD/strength-analysis.md.
++namespace Slic3r::Feature::StrengthAnalysis {
++
++struct Material
++{
++    const char *name;
++    double      uts;        // MPa, tensile strength along the beads
++    double      modulus;    // MPa
++    double      z_factor;   // strength across layers as a fraction of uts
++    double      elongation; // % at break; low means brittle and notch sensitive
++};
++
++// Properties for a slicer filament_type such as "PETG-CF", or nullptr if unknown.
++const Material *find_material(const std::string &filament_type);
++const Material &default_material();
++
++struct PrintSettings
++{
++    double layer_height = 0.2;  // mm, also the spacing of the analysed cuts
++    double wall_width   = 0.45; // mm per wall loop
++    int    wall_loops   = 2;
++    double infill       = 0.15; // sparse infill density, 0..1
++};
++
++struct LoadCase
++{
++    indexed_triangle_set fixture;                // painted fixture facets, world mm
++    indexed_triangle_set load;                   // painted load facets, world mm
++    Vec3d                force = Vec3d::Zero(); // N, world
++};
++
++enum class Mode { Bending, Tension, Shear, Torsion };
++
++struct Result
++{
++    std::string error; // set when there is no answer, in user-facing wording
++
++    double safety_factor = 0.;
++    double stress        = 0.; // von Mises at the critical cut, MPa
++    double allowable     = 0.; // printed strength at that cut, MPa
++    double kt            = 1.; // stress concentration at that cut
++    Mode   mode          = Mode::Bending;
++    int    axis          = 2;  // normal of the critical cut: 0 = X, 1 = Y, 2 = Z
++    Vec3d  critical_point = Vec3d::Zero(); // centroid of the critical cut
++    Vec3d  load_point     = Vec3d::Zero();
++    double deflection     = 0.; // mm at the load point, along the load
++
++    bool ok() const { return error.empty(); }
++};
++
++// `mesh` is the whole object in world coordinates.
++Result analyse(const indexed_triangle_set &mesh, const LoadCase &load_case, const Material &material, const PrintSettings &print);
++
++// Area-weighted centroid of a set of facets, such as a painted load area.
++std::optional<Vec3d> area_centroid(const indexed_triangle_set &its);
++
++// Stress concentration of a circular hole of diameter d in a strip of width w (Peterson).
++double kt_hole(double d, double w);
++// Share of the geometric stress concentration a material actually feels.
++double notch_sensitivity(double elongation);
++
++} // namespace Slic3r::Feature::StrengthAnalysis
+diff --git a/src/slic3r/CMakeLists.txt b/src/slic3r/CMakeLists.txt
+index 46c32ff23..a3b23d0e2 100644
+--- a/src/slic3r/CMakeLists.txt
++++ b/src/slic3r/CMakeLists.txt
+@@ -186,6 +186,8 @@ set(SLIC3R_GUI_SOURCES
+     GUI/Gizmos/GLGizmoFlatten.hpp
+     GUI/Gizmos/GLGizmoFuzzySkin.cpp
+     GUI/Gizmos/GLGizmoFuzzySkin.hpp
++    GUI/Gizmos/GLGizmoStrength.cpp
++    GUI/Gizmos/GLGizmoStrength.hpp
+     #GUI/Gizmos/GLGizmoHollow.cpp
+     #GUI/Gizmos/GLGizmoHollow.hpp
+     GUI/Gizmos/GLGizmoMeasure.cpp
+diff --git a/src/slic3r/GUI/GLCanvas3D.cpp b/src/slic3r/GUI/GLCanvas3D.cpp
+index 01ff6de71..970a50ddf 100644
+--- a/src/slic3r/GUI/GLCanvas3D.cpp
++++ b/src/slic3r/GUI/GLCanvas3D.cpp
+@@ -1650,7 +1650,8 @@ void GLCanvas3D::toggle_model_objects_visibility(bool visible, const ModelObject
+                     if (  (gizmo_type == GLGizmosManager::FdmSupports
+                         || gizmo_type == GLGizmosManager::Seam
+                         || gizmo_type == GLGizmosManager::Cut
+-                        || gizmo_type == GLGizmosManager::FuzzySkin)
++                        || gizmo_type == GLGizmosManager::FuzzySkin
++                        || gizmo_type == GLGizmosManager::Strength)
+                         && !vol->is_modifier) {
+                         vol->force_neutral_color = true;
+                     }
+@@ -4425,7 +4426,8 @@ void GLCanvas3D::on_mouse(wxMouseEvent& evt)
+                     && m_gizmos.get_current_type() != GLGizmosManager::Seam
+                     && m_gizmos.get_current_type() != GLGizmosManager::Cut
+                     && m_gizmos.get_current_type() != GLGizmosManager::MmSegmentation
+-                    && m_gizmos.get_current_type() != GLGizmosManager::FuzzySkin) {
++                    && m_gizmos.get_current_type() != GLGizmosManager::FuzzySkin
++                    && m_gizmos.get_current_type() != GLGizmosManager::Strength) {
+                     m_rectangle_selection.start_dragging(m_mouse.position, evt.ShiftDown() ? GLSelectionRectangle::Select : GLSelectionRectangle::Deselect);
+ 
+                     if (!has_mouse_capture())  // ORCA keep tracking mouse position while drag active and cursor not in window bounds
+@@ -4610,7 +4612,7 @@ void GLCanvas3D::on_mouse(wxMouseEvent& evt)
+                 const Vec3d rot = (Vec3d(pos.x(), pos.y(), 0.) - m_mouse.drag.start_position_3D) * (PI * TRACKBALLSIZE / 180.) * mult;
+                 if (this->m_canvas_type == ECanvasType::CanvasAssembleView || m_gizmos.get_current_type() == GLGizmosManager::FdmSupports ||
+                     m_gizmos.get_current_type() == GLGizmosManager::Seam || m_gizmos.get_current_type() == GLGizmosManager::MmSegmentation ||
+-                    m_gizmos.get_current_type() == GLGizmosManager::FuzzySkin) {
++                    m_gizmos.get_current_type() == GLGizmosManager::FuzzySkin || m_gizmos.get_current_type() == GLGizmosManager::Strength) {
+                     // Orca: Reuse the centralized pivot policy for scene-oriented tools.
+                     const std::optional<Vec3d> rotate_target = get_camera_orbit_target(ECameraNavigationType::Mouse);
+                     if (rotate_target.has_value())
+@@ -10704,7 +10706,8 @@ std::optional<Vec3d> GLCanvas3D::get_camera_orbit_target(ECameraNavigationType n
+     const GLGizmosManager::EType gizmo_type = m_gizmos.get_current_type();
+     const bool use_scene_target = m_canvas_type == ECanvasType::CanvasAssembleView ||
+         gizmo_type == GLGizmosManager::FdmSupports || gizmo_type == GLGizmosManager::Seam ||
+-        gizmo_type == GLGizmosManager::MmSegmentation || gizmo_type == GLGizmosManager::FuzzySkin;
++        gizmo_type == GLGizmosManager::MmSegmentation || gizmo_type == GLGizmosManager::FuzzySkin ||
++        gizmo_type == GLGizmosManager::Strength;
+     if (use_scene_target) {
+         if (!m_selection.is_empty())
+             return m_selection.get_bounding_box().center();
+@@ -10747,7 +10750,7 @@ bool GLCanvas3D::is_bed_visible() const
+ 
+     const auto type = m_gizmos.get_current_type();
+     return type != GLGizmosManager::FdmSupports && type != GLGizmosManager::Seam &&
+-        type != GLGizmosManager::MmSegmentation && type != GLGizmosManager::FuzzySkin;
++        type != GLGizmosManager::MmSegmentation && type != GLGizmosManager::FuzzySkin && type != GLGizmosManager::Strength;
+ }
+ 
+ Vec3d GLCanvas3D::get_camera_pan_anchor(Camera& camera, ECameraNavigationType navigation_type,
+diff --git a/src/slic3r/GUI/Gizmos/GLGizmoPainterBase.hpp b/src/slic3r/GUI/Gizmos/GLGizmoPainterBase.hpp
+index 19856603f..f3449b2a7 100644
+--- a/src/slic3r/GUI/Gizmos/GLGizmoPainterBase.hpp
++++ b/src/slic3r/GUI/Gizmos/GLGizmoPainterBase.hpp
+@@ -28,7 +28,8 @@ enum class PainterGizmoType {
+     SEAM,
+     MM_SEGMENTATION,
+     FUZZY_SKIN,
+-    TEXTURE_DISPLACEMENT
++    TEXTURE_DISPLACEMENT,
++    STRENGTH
+ };
+ 
+ class TriangleSelectorGUI : public TriangleSelector {
+@@ -315,14 +316,15 @@ protected:
+ 
+     TriangleSelector::ClippingPlane get_clipping_plane_in_volume_coordinates(const Transform3d &trafo) const;
+ 
++    // World transforms of the model parts, in mo->volumes order.
++    std::vector<Transform3d> mesh_trafo_matrices() const;
++
+ private:
+     std::vector<std::vector<ProjectedMousePosition>> get_projected_mouse_positions(const Vec2d &mouse_position, double resolution, const std::vector<Transform3d> &trafo_matrices) const;
+ 
+     std::vector<ProjectedHeightRange> get_projected_height_range(const Vec2d& mouse_position, double resolution, const std::vector<const ModelVolume*>& part_volumes, const std::vector<Transform3d>& trafo_matrices) const;
+ 
+     bool is_mesh_point_clipped(const Vec3d& point, const Transform3d& trafo) const;
+-    // World transforms of the model parts, in mo->volumes order.
+-    std::vector<Transform3d> mesh_trafo_matrices() const;
+     void update_raycast_cache(const Vec2d& mouse_position,
+                               const Camera& camera,
+                               const std::vector<Transform3d>& trafo_matrices) const;
+diff --git a/src/slic3r/GUI/Gizmos/GLGizmoStrength.cpp b/src/slic3r/GUI/Gizmos/GLGizmoStrength.cpp
+new file mode 100644
+index 000000000..52fa40d24
+--- /dev/null
++++ b/src/slic3r/GUI/Gizmos/GLGizmoStrength.cpp
+@@ -0,0 +1,486 @@
++#include "GLGizmoStrength.hpp"
++
++#include "libslic3r/Geometry.hpp"
++#include "libslic3r/Model.hpp"
++#include "libslic3r/PresetBundle.hpp"
++
++#include "slic3r/GUI/Camera.hpp"
++#include "slic3r/GUI/CameraUtils.hpp"
++#include "slic3r/GUI/GLCanvas3D.hpp"
++#include "slic3r/GUI/GUI.hpp"
++#include "slic3r/GUI/GUI_App.hpp"
++#include "slic3r/GUI/ImGuiWrapper.hpp"
++#include "slic3r/GUI/Plater.hpp"
++#include "slic3r/Utils/UndoRedo.hpp"
++#include "GLGizmoUtils.hpp"
++
++#include <boost/format.hpp>
++#include <glad/gl.h>
++
++namespace Slic3r::GUI {
++
++namespace SA = Feature::StrengthAnalysis;
++
++const ColorRGBA GLGizmoStrength::FixtureColor = {0.13f, 0.69f, 0.33f, 1.f};
++const ColorRGBA GLGizmoStrength::LoadColor    = {1.f, 0.45f, 0.1f, 1.f};
++
++namespace {
++
++constexpr double KG_TO_N = 9.80665;
++constexpr double LB_TO_N = 4.4482216152605;
++// Snap the aimed arrow onto an axis when it comes this close to one.
++constexpr double AXIS_SNAP_DEG = 4.;
++constexpr double ARROW_GRAB_PX = 10.;
++
++const ColorRGBA AxisColors[3] = {{0.9f, 0.2f, 0.2f, 0.6f}, {0.2f, 0.75f, 0.2f, 0.6f}, {0.25f, 0.45f, 1.f, 0.6f}};
++const ColorRGBA CriticalColor = {0.9f, 0.1f, 0.1f, 1.f};
++
++double distance_to_segment(const Vec2d &p, const Vec2d &a, const Vec2d &b)
++{
++    const Vec2d  ab = b - a;
++    const double t  = ab.squaredNorm() > 0. ? std::clamp((p - a).dot(ab) / ab.squaredNorm(), 0., 1.) : 0.;
++    return (a + t * ab - p).norm();
++}
++
++} // namespace
++
++GLGizmoStrength::GLGizmoStrength(GLCanvas3D &parent, const std::string &icon_filename, unsigned int sprite_id)
++    : GLGizmoPainterBase(parent, icon_filename, sprite_id)
++{
++    m_cursor_type = TriangleSelector::CursorType::CIRCLE;
++}
++
++bool GLGizmoStrength::on_init()
++{
++    const wxString ctrl  = GUI::shortkey_ctrl_prefix();
++    const wxString shift = GUI::shortkey_shift_prefix();
++
++    m_desc["fixture"]     = _L("Paint fixture");
++    m_desc["load"]        = _L("Paint load");
++    m_desc["remove"]      = _L("Erase");
++    m_desc["remove_all"]  = _L("Erase all");
++    m_desc["cursor_size"] = _L("Brush size");
++    m_desc["aim"]         = _L("Aim load");
++
++    m_shortcuts = {{_L("Left mouse button"), m_desc["fixture"]},
++                   {_L("Right mouse button"), m_desc["load"]},
++                   {shift + _L("Left mouse button"), m_desc["remove"]},
++                   {_L("Drag the arrow"), m_desc["aim"]},
++                   {ctrl + _L("Mouse wheel"), m_desc["cursor_size"]}};
++
++    // Unit length, scaled to the part when drawn.
++    m_arrow.init_from(stilized_arrow(24, 0.09f, 0.3f, 0.035f, 0.7f));
++    m_ring.init_from(smooth_torus(64, 12, 1.f, 0.01f));
++    m_marker.init_from(smooth_sphere(24, 1.f));
++    return true;
++}
++
++std::string GLGizmoStrength::on_get_name() const { return _u8L("Strength check"); }
++
++PainterGizmoType GLGizmoStrength::get_painter_type() const { return PainterGizmoType::STRENGTH; }
++
++void GLGizmoStrength::on_shutdown()
++{
++    m_aiming = m_arrow_hovered = false;
++    m_parent.toggle_model_objects_visibility(true);
++}
++
++wxString GLGizmoStrength::handle_snapshot_action_name(bool shift_down, Button button_down) const
++{
++    if (shift_down)
++        return _L("Remove selection");
++    return button_down == Button::Left ? m_desc.at("fixture") : m_desc.at("load");
++}
++
++void GLGizmoStrength::on_save(cereal::BinaryOutputArchive &ar) const
++{
++    ar(m_paint, m_direction.x(), m_direction.y(), m_direction.z(), m_magnitude, m_unit);
++}
++
++void GLGizmoStrength::on_load(cereal::BinaryInputArchive &ar)
++{
++    ar(m_paint, m_direction.x(), m_direction.y(), m_direction.z(), m_magnitude, m_unit);
++    invalidate_result();
++    GLGizmoPainterBase::on_load(ar);
++}
++
++void GLGizmoStrength::update_model_object()
++{
++    const ModelObject *mo = m_c->selection_info()->model_object();
++    Paint             &paint = m_paint[mo->id().id];
++    paint.clear();
++    size_t idx = 0;
++    for (const ModelVolume *mv : mo->volumes)
++        if (mv->is_model_part())
++            paint.push_back({mv->mesh().its.indices.size(), m_triangle_selectors[idx++]->serialize()});
++    update_load_point();
++    invalidate_result();
++    m_parent.set_as_dirty();
++}
++
++void GLGizmoStrength::update_from_model_object(bool first_update)
++{
++    wxBusyCursor wait;
++
++    const ModelObject *mo = m_c->selection_info()->model_object();
++    m_triangle_selectors.clear();
++
++    const std::vector<ColorRGBA> ebt_colors{GLVolume::NEUTRAL_COLOR, FixtureColor, LoadColor};
++    const auto                   paint = m_paint.find(mo->id().id);
++    size_t                       idx   = 0;
++    for (const ModelVolume *mv : mo->volumes) {
++        if (!mv->is_model_part())
++            continue;
++        m_triangle_selectors.emplace_back(std::make_unique<TriangleSelectorPatch>(mv->mesh(), ebt_colors));
++        if (paint != m_paint.end() && idx < paint->second.size() && paint->second[idx].facets == mv->mesh().its.indices.size())
++            m_triangle_selectors.back()->deserialize(paint->second[idx].data, false);
++        m_triangle_selectors.back()->request_update_render_data();
++        ++idx;
++    }
++
++    if (first_update)
++        m_result.reset();
++    update_load_point();
++}
++
++void GLGizmoStrength::update_load_point()
++{
++    const std::vector<Transform3d> trafos = mesh_trafo_matrices();
++    indexed_triangle_set           load;
++    BoundingBoxf3                  bbox;
++    const ModelObject             *mo  = m_c->selection_info()->model_object();
++    size_t                         idx = 0;
++    for (const ModelVolume *mv : mo->volumes) {
++        if (!mv->is_model_part())
++            continue;
++        indexed_triangle_set its = m_triangle_selectors[idx]->get_facets(EnforcerBlockerType::BLOCKER);
++        its_transform(its, trafos[idx]);
++        its_merge(load, its);
++        bbox.merge(mv->mesh().transformed_bounding_box(trafos[idx]));
++        ++idx;
++    }
++    m_load_point   = SA::area_centroid(load);
++    m_arrow_length = std::clamp(0.35 * bbox.max_size(), 10., 60.);
++}
++
++Vec3d GLGizmoStrength::force() const
++{
++    const double scale = m_unit == Unit::Kilogram ? KG_TO_N : m_unit == Unit::Pound ? LB_TO_N : 1.;
++    return m_direction * double(m_magnitude) * scale;
++}
++
++void GLGizmoStrength::set_direction(const Vec3d &direction)
++{
++    if (direction.squaredNorm() < 1e-12)
++        return;
++    Vec3d d = direction.normalized();
++    for (int axis = 0; axis < 3; ++axis)
++        if (std::abs(d[axis]) > std::cos(Geometry::deg2rad(AXIS_SNAP_DEG)))
++            d = Vec3d::Unit(axis) * (d[axis] > 0. ? 1. : -1.);
++    if (d != m_direction) {
++        m_direction = d;
++        invalidate_result();
++    }
++}
++
++// The arrow pushes on the load point: its tip sits on the part, its tail out in space.
++Transform3d GLGizmoStrength::arrow_matrix() const
++{
++    return Geometry::translation_transform(*m_load_point - m_direction * m_arrow_length) *
++           Transform3d(Eigen::Quaterniond::FromTwoVectors(Vec3d::UnitZ(), m_direction)) * Geometry::scale_transform(m_arrow_length);
++}
++
++bool GLGizmoStrength::arrow_hit(const Vec2d &mouse) const
++{
++    const Camera &camera = wxGetApp().plater()->get_camera();
++    const Points  pts    = CameraUtils::project(camera, std::vector<Vec3d>{*m_load_point - m_direction * m_arrow_length, *m_load_point});
++    return distance_to_segment(mouse, pts[0].cast<double>(), pts[1].cast<double>()) < ARROW_GRAB_PX * m_parent.get_scale();
++}
++
++// Swing the arrow tail over a sphere around the load point, like a trackball.
++void GLGizmoStrength::aim_arrow(const Vec2d &mouse)
++{
++    const Camera &camera = wxGetApp().plater()->get_camera();
++    Vec3d         origin, ray;
++    CameraUtils::ray_from_screen_pos(camera, mouse, origin, ray);
++    ray.normalize();
++    const Vec3d  center = *m_load_point;
++    const double b      = ray.dot(origin - center);
++    const double disc   = b * b - ((origin - center).squaredNorm() - m_arrow_length * m_arrow_length);
++    // Nearest hit on the sphere, or the point of the ray closest to it when the ray misses.
++    const Vec3d tail = origin + ray * (disc >= 0. ? -b - std::sqrt(disc) : -b);
++    set_direction(center - tail);
++    m_parent.set_as_dirty();
++}
++
++bool GLGizmoStrength::on_mouse(const wxMouseEvent &mouse_event)
++{
++    const Vec2d mouse(mouse_event.GetX(), mouse_event.GetY());
++    if (m_aiming) {
++        if (mouse_event.Dragging())
++            aim_arrow(mouse);
++        else if (mouse_event.LeftUp())
++            m_aiming = false;
++        return true;
++    }
++    if (mouse_event.Moving() && m_load_point) {
++        const bool hovered = arrow_hit(mouse);
++        if (hovered != m_arrow_hovered) {
++            m_arrow_hovered = hovered;
++            m_parent.set_as_dirty();
++        }
++    }
++    if (mouse_event.LeftDown() && m_arrow_hovered && m_load_point && !mouse_event.ShiftDown()) {
++        Plater::TakeSnapshot snapshot(wxGetApp().plater(), m_desc.at("aim").ToUTF8().data(), UndoRedo::SnapshotType::GizmoAction);
++        m_aiming = true;
++        return true;
++    }
++    return GLGizmoPainterBase::on_mouse(mouse_event);
++}
++
++void GLGizmoStrength::render_model(GLModel &model, const Transform3d &matrix, const ColorRGBA &color) const
++{
++    GLShaderProgram *shader = wxGetApp().get_shader("gouraud_light");
++    if (shader == nullptr)
++        return;
++    const Camera     &camera      = wxGetApp().plater()->get_camera();
++    const Transform3d view_matrix = camera.get_view_matrix();
++    shader->start_using();
++    shader->set_uniform("emission_factor", 0.1f);
++    shader->set_uniform("view_model_matrix", view_matrix * matrix);
++    shader->set_uniform("projection_matrix", camera.get_projection_matrix());
++    const Matrix3d view_normal_matrix = view_matrix.matrix().block(0, 0, 3, 3) * matrix.matrix().block(0, 0, 3, 3).inverse().transpose();
++    shader->set_uniform("view_normal_matrix", view_normal_matrix);
++    model.set_color(color);
++    model.render();
++    shader->stop_using();
++}
++
++void GLGizmoStrength::render_painter_gizmo()
++{
++    const Selection &selection = m_parent.get_selection();
++
++    glsafe(::glEnable(GL_BLEND));
++    glsafe(::glEnable(GL_DEPTH_TEST));
++
++    render_triangles(selection);
++    m_c->object_clipper()->render_cut();
++    m_c->instances_hider()->render_cut();
++    if (!m_arrow_hovered && !m_aiming)
++        render_cursor();
++
++    if (m_load_point) {
++        const bool active = m_arrow_hovered || m_aiming;
++        render_model(m_arrow, arrow_matrix(), active ? ColorRGBA::YELLOW() : LoadColor);
++        if (active) {
++            // Rotate-gizmo style rings show the sphere the arrow swings over.
++            const Transform3d at = Geometry::translation_transform(*m_load_point) * Geometry::scale_transform(m_arrow_length);
++            render_model(m_ring, at, AxisColors[2]);
++            render_model(m_ring, at * Geometry::rotation_transform({0., 0.5 * PI, 0.}), AxisColors[0]);
++            render_model(m_ring, at * Geometry::rotation_transform({0.5 * PI, 0., 0.}), AxisColors[1]);
++        }
++    }
++    if (m_result && m_result->ok() && !m_result_stale)
++        render_model(m_marker, Geometry::translation_transform(m_result->critical_point) * Geometry::scale_transform(0.04 * m_arrow_length / 0.35),
++                     CriticalColor);
++
++    glsafe(::glDisable(GL_BLEND));
++}
++
++void GLGizmoStrength::run_analysis()
++{
++    wxBusyCursor wait;
++
++    const ModelObject             *mo     = m_c->selection_info()->model_object();
++    const std::vector<Transform3d> trafos = mesh_trafo_matrices();
++    indexed_triangle_set           mesh;
++    SA::LoadCase                   lc;
++    size_t                         idx = 0;
++    for (const ModelVolume *mv : mo->volumes) {
++        if (!mv->is_model_part())
++            continue;
++        indexed_triangle_set its = mv->mesh().its;
++        its_transform(its, trafos[idx], true);
++        its_merge(mesh, its);
++        for (auto [state, out] : {std::pair{EnforcerBlockerType::ENFORCER, &lc.fixture}, std::pair{EnforcerBlockerType::BLOCKER, &lc.load}}) {
++            indexed_triangle_set painted = m_triangle_selectors[idx]->get_facets(state);
++            its_transform(painted, trafos[idx]);
++            its_merge(*out, painted);
++        }
++        ++idx;
++    }
++    lc.force = force();
++
++    // The analysis follows the settings the object will actually be printed with.
++    DynamicPrintConfig cfg = wxGetApp().preset_bundle->full_config();
++    cfg.apply(mo->config.get(), true);
++    SA::PrintSettings print;
++    const double      nozzle = cfg.opt_float("nozzle_diameter", 0);
++    print.layer_height       = cfg.opt_float("layer_height");
++    print.wall_loops         = cfg.opt_int("wall_loops");
++    print.infill             = cfg.option<ConfigOptionPercent>("sparse_infill_density")->value / 100.;
++    print.wall_width         = cfg.get_abs_value("inner_wall_line_width", nozzle);
++    if (print.wall_width <= 0.)
++        print.wall_width = 1.125 * nozzle;
++
++    const auto  *types    = cfg.option<ConfigOptionStrings>("filament_type");
++    const int    extruder = cfg.has("extruder") ? std::max(1, cfg.opt_int("extruder")) : 1;
++    const std::string type = types && !types->values.empty() ? types->values[std::min<size_t>(extruder - 1, types->values.size() - 1)] : "";
++    const SA::Material *material = SA::find_material(type);
++    m_material_note = material ? material->name :
++                                 (boost::format(_u8L("%1% (unknown filament type %2%)")) % SA::default_material().name % type).str();
++
++    m_print_note = (boost::format(_u8L("%1% walls, %2% infill, %3% mm layers")) % print.wall_loops %
++                    (std::to_string(int(std::round(print.infill * 100.))) + "%") % print.layer_height).str();
++
++    m_result       = SA::analyse(mesh, lc, material ? *material : SA::default_material(), print);
++    m_result_stale = false;
++    m_parent.set_as_dirty();
++}
++
++void GLGizmoStrength::render_direction_input()
++{
++    ImGui::AlignTextToFramePadding();
++    m_imgui->text(_L("Load"));
++    ImGui::SameLine(m_imgui->scaled(4.f));
++    ImGui::PushItemWidth(m_imgui->scaled(4.f));
++    if (ImGui::BBLDragFloat("##magnitude", &m_magnitude, 0.1f, 0.f, 10000.f, "%.2f")) {
++        m_magnitude = std::max(0.f, m_magnitude);
++        invalidate_result();
++    }
++    ImGui::SameLine();
++    int unit = int(m_unit);
++    if (m_imgui->combo(std::string("##unit"), {_u8L("kg"), _u8L("lb"), _u8L("N")}, unit, 0, 0.f, m_imgui->scaled(3.f))) {
++        m_unit = Unit(unit);
++        invalidate_result();
++    }
++
++    ImGui::AlignTextToFramePadding();
++    m_imgui->text(_L("Direction"));
++    static const std::array<std::pair<const char *, Vec3d>, 6> presets{{{"-Z", -Vec3d::UnitZ()},
++                                                                        {"+Z", Vec3d::UnitZ()},
++                                                                        {"-X", -Vec3d::UnitX()},
++                                                                        {"+X", Vec3d::UnitX()},
++                                                                        {"-Y", -Vec3d::UnitY()},
++                                                                        {"+Y", Vec3d::UnitY()}}};
++    for (size_t i = 0; i < presets.size(); ++i) {
++        ImGui::SameLine(i == 0 ? m_imgui->scaled(4.f) : 0.f);
++        if (m_imgui->button(presets[i].first)) {
++            Plater::TakeSnapshot snapshot(wxGetApp().plater(), m_desc.at("aim").ToUTF8().data(), UndoRedo::SnapshotType::GizmoAction);
++            set_direction(presets[i].second);
++        }
++    }
++
++    // Free direction, normalised after each edit.
++    const char *labels[3] = {"X", "Y", "Z"};
++    Vec3f       dir       = m_direction.cast<float>();
++    ImGui::Dummy(ImVec2(0.f, 0.f));
++    for (int axis = 0; axis < 3; ++axis) {
++        ImGui::SameLine(axis == 0 ? m_imgui->scaled(4.f) : 0.f);
++        m_imgui->text(labels[axis]);
++        ImGui::SameLine();
++        ImGui::PushItemWidth(m_imgui->scaled(2.5f));
++        if (ImGui::BBLDragFloat((std::string("##dir") + labels[axis]).c_str(), &dir[axis], 0.01f, -1.f, 1.f, "%.2f"))
++            set_direction(dir.cast<double>());
++    }
++}
++
++void GLGizmoStrength::render_result()
++{
++    if (!m_result)
++        return;
++    ImGui::Separator();
++    if (!m_result->ok()) {
++        m_imgui->warning_text(wxString::FromUTF8(m_result->error));
++        return;
++    }
++    const SA::Result &r = *m_result;
++    if (m_result_stale)
++        m_imgui->text_colored(ImGuiWrapper::COL_RED, _L("Results are out of date. Analyze again."));
++
++    const ImVec4 color = r.safety_factor < 1. ? ImGuiWrapper::COL_RED :
++                         r.safety_factor < 2. ? ImGuiWrapper::COL_ORANGE_LIGHT :
++                                                ImGuiWrapper::COL_ORCA;
++    const wxString verdict = r.safety_factor < 1. ? _L("Likely to break") :
++                             r.safety_factor < 2. ? _L("Little margin") :
++                                                    _L("Should hold");
++    m_imgui->text_colored(color, (boost::format(_u8L("Safety factor %1$.2f")) % r.safety_factor).str() + "  " + verdict.ToUTF8().data());
++
++    const char *axes[3]  = {"X", "Y", "Z"};
++    const std::string modes[4] = {_u8L("bending"), _u8L("tension"), _u8L("shear"), _u8L("torsion")};
++    m_imgui->text((boost::format(_u8L("Peak stress %1$.1f MPa of %2$.1f MPa allowed")) % r.stress % r.allowable).str());
++    m_imgui->text((boost::format(_u8L("Weakest cut: %1% = %2$.1f mm, mostly %3%")) % axes[r.axis] % r.critical_point[r.axis] %
++                   modes[int(r.mode)]).str());
++    if (r.axis == 2)
++        m_imgui->text(_L("The weakest cut runs between layers."));
++    if (r.kt > 1.01)
++        m_imgui->text((boost::format(_u8L("Stress raised %1$.1fx by a hole")) % r.kt).str());
++    m_imgui->text((boost::format(_u8L("Deflection at load %1$.2f mm")) % r.deflection).str());
++    m_imgui->text_colored(ImGuiWrapper::COL_GREY_LIGHT, m_material_note + ", " + m_print_note);
++    m_imgui->text_colored(ImGuiWrapper::COL_GREY_LIGHT, _L("Estimate from beam theory, not FEA."));
++}
++
++void GLGizmoStrength::on_render_input_window(float x, float y, float bottom_limit)
++{
++    if (!m_c->selection_info()->model_object())
++        return;
++
++    const float approx_height = m_imgui->scaled(16.f);
++    y                         = std::min(y, bottom_limit - approx_height);
++    GizmoImguiSetNextWIndowPos(x, y, ImGuiCond_Always, 0.0f, 0.0f);
++
++    ImGuiWrapper::push_toolbar_style(m_parent.get_scale());
++    const float f_scale = m_parent.get_gizmos_manager().get_layout_scale();
++    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6.0f, 4.0f * f_scale));
++    GizmoImguiBegin(get_name(), ImGuiWindowFlags_NoMove | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoTitleBar);
++
++    m_imgui->text_colored(ImVec4(FixtureColor.r(), FixtureColor.g(), FixtureColor.b(), 1.f), m_desc.at("fixture") + ": " + _L("Left mouse button"));
++    m_imgui->text_colored(ImVec4(LoadColor.r(), LoadColor.g(), LoadColor.b(), 1.f), m_desc.at("load") + ": " + _L("Right mouse button"));
++
++    // Whole faces are what a fixture or a load usually covers, so smart fill comes first.
++    ImGui::AlignTextToFramePadding();
++    m_imgui->text(_L("Tool type"));
++    ImGui::SameLine(m_imgui->scaled(4.f));
++    if (m_imgui->radio_button(_L("Face"), m_tool_type == ToolType::SMART_FILL))
++        m_tool_type = ToolType::SMART_FILL;
++    ImGui::SameLine();
++    if (m_imgui->radio_button(_L("Brush"), m_tool_type == ToolType::BRUSH))
++        m_tool_type = ToolType::BRUSH;
++    if (m_tool_type == ToolType::BRUSH) {
++        ImGui::AlignTextToFramePadding();
++        m_imgui->text(m_desc.at("cursor_size"));
++        ImGui::SameLine(m_imgui->scaled(4.f));
++        ImGui::PushItemWidth(m_imgui->scaled(7.f));
++        m_imgui->bbl_slider_float_style("##cursor_radius", &m_cursor_radius, CursorRadiusMin, CursorRadiusMax, "%.2f", 1.0f, true);
++    }
++
++    ImGui::Separator();
++    render_direction_input();
++    ImGui::Separator();
++
++    if (m_imgui->button(_L("Analyze")))
++        run_analysis();
++    ImGui::SameLine();
++    GLGizmoUtils::render_tooltip_button(m_imgui, m_parent, m_shortcuts, x, y);
++    ImGui::SameLine();
++    if (m_imgui->button(m_desc.at("remove_all"))) {
++        Plater::TakeSnapshot snapshot(wxGetApp().plater(), "Reset selection", UndoRedo::SnapshotType::GizmoAction);
++        for (auto &selector : m_triangle_selectors) {
++            selector->reset();
++            selector->request_update_render_data(true);
++        }
++        update_model_object();
++    }
++    ImGui::SameLine();
++    GLGizmoUtils::begin_right_aligned_buttons({_L("Done")});
++    if (m_imgui->button(_L("Done")))
++        m_parent.reset_all_gizmos();
++
++    render_result();
++
++    ImGui::PopStyleVar(1);
++    GizmoImguiEnd();
++    ImGuiWrapper::pop_toolbar_style();
++}
++
++} // namespace Slic3r::GUI
+diff --git a/src/slic3r/GUI/Gizmos/GLGizmoStrength.hpp b/src/slic3r/GUI/Gizmos/GLGizmoStrength.hpp
+new file mode 100644
+index 000000000..4ea128f19
+--- /dev/null
++++ b/src/slic3r/GUI/Gizmos/GLGizmoStrength.hpp
+@@ -0,0 +1,106 @@
++#pragma once
++
++#include "GLGizmoPainterBase.hpp"
++
++#include "libslic3r/Feature/StrengthAnalysis/StrengthAnalysis.hpp"
++#include "slic3r/GUI/I18N.hpp"
++
++#include <cereal/types/map.hpp>
++
++#include <optional>
++
++namespace Slic3r::GUI {
++
++// Paint where a part is held and where it is loaded, aim the load, and get a
++// quick safety factor for the part as it will be printed.
++//
++// The load case is a what-if check, not part of the print, so it lives in this
++// gizmo for the session (with undo/redo) and never touches the model or the
++// project file.
++class GLGizmoStrength : public GLGizmoPainterBase
++{
++public:
++    GLGizmoStrength(GLCanvas3D &parent, const std::string &icon_filename, unsigned int sprite_id);
++
++    void render_painter_gizmo() override;
++    bool on_mouse(const wxMouseEvent &mouse_event) override;
++
++protected:
++    void        on_render_input_window(float x, float y, float bottom_limit) override;
++    std::string on_get_name() const override;
++
++    wxString handle_snapshot_action_name(bool shift_down, Button button_down) const override;
++
++    std::string get_gizmo_entering_text() const override { return _u8L("Entering strength check"); }
++    std::string get_gizmo_leaving_text() const override { return _u8L("Leaving strength check"); }
++    std::string get_action_snapshot_name() const override { return _u8L("Strength check editing"); }
++
++    // Left button paints the fixture, right button the load.
++    ColorRGBA get_cursor_sphere_left_button_color() const override { return { FixtureColor.r(), FixtureColor.g(), FixtureColor.b(), 0.25f }; }
++    ColorRGBA get_cursor_sphere_right_button_color() const override { return { LoadColor.r(), LoadColor.g(), LoadColor.b(), 0.25f }; }
++
++    void on_load(cereal::BinaryInputArchive &ar) override;
++    void on_save(cereal::BinaryOutputArchive &ar) const override;
++
++private:
++    bool on_init() override;
++
++    void update_model_object() override;
++    void update_from_model_object(bool first_update) override;
++
++    void             on_opening() override {}
++    void             on_shutdown() override;
++    PainterGizmoType get_painter_type() const override;
++
++    enum class Unit { Kilogram, Pound, Newton };
++
++    // Paint of one model part, with the facet count it was painted on so that
++    // paint never gets applied to a mesh that has since changed.
++    struct PartPaint
++    {
++        size_t                                  facets = 0;
++        TriangleSelector::TriangleSplittingData data;
++        template<class Archive> void serialize(Archive &ar) { ar(facets, data); }
++    };
++    using Paint = std::vector<PartPaint>;
++
++    Vec3d  force() const;
++    Transform3d arrow_matrix() const;
++    // Mouse over the arrow, in screen space.
++    bool   arrow_hit(const Vec2d &mouse) const;
++    void   aim_arrow(const Vec2d &mouse);
++    void   set_direction(const Vec3d &direction);
++    void   invalidate_result() { m_result_stale = m_result.has_value(); }
++    void   update_load_point();
++    void   run_analysis();
++    void   render_model(GLModel &model, const Transform3d &matrix, const ColorRGBA &color) const;
++    void   render_direction_input();
++    void   render_result();
++
++    static const ColorRGBA FixtureColor;
++    static const ColorRGBA LoadColor;
++
++    std::map<size_t, Paint> m_paint; // keyed by ModelObject id
++    Vec3d                   m_direction = -Vec3d::UnitZ();
++    float                   m_magnitude = 1.f;
++    Unit                    m_unit      = Unit::Kilogram;
++
++    std::optional<Vec3d> m_load_point;  // world, centroid of the painted load
++    double               m_arrow_length = 20.;
++    bool                 m_arrow_hovered = false;
++    bool                 m_aiming        = false;
++
++    std::optional<Feature::StrengthAnalysis::Result> m_result;
++    bool                                             m_result_stale = false;
++    std::string                                      m_material_note;
++    std::string                                      m_print_note;
++
++    GLModel m_arrow;
++    GLModel m_ring;
++    GLModel m_marker;
++
++    std::map<std::string, wxString>            m_desc;
++    std::vector<std::pair<wxString, wxString>> m_shortcuts;
++};
++
++} // namespace Slic3r::GUI
+diff --git a/src/slic3r/GUI/Gizmos/GLGizmos.hpp b/src/slic3r/GUI/Gizmos/GLGizmos.hpp
+index 1d1d03627..f56174cd1 100644
+--- a/src/slic3r/GUI/Gizmos/GLGizmos.hpp
++++ b/src/slic3r/GUI/Gizmos/GLGizmos.hpp
+@@ -33,6 +33,7 @@ enum class SLAGizmoEventType : unsigned char {
+ #include "slic3r/GUI/Gizmos/GLGizmoSlaSupports.hpp"
+ #include "slic3r/GUI/Gizmos/GLGizmoFdmSupports.hpp"
+ #include "slic3r/GUI/Gizmos/GLGizmoFuzzySkin.hpp"
++#include "slic3r/GUI/Gizmos/GLGizmoStrength.hpp"
+ #include "slic3r/GUI/Gizmos/GLGizmoMmuSegmentation.hpp"
+ // BBS
+ #include "slic3r/GUI/Gizmos/GLGizmoAdvancedCut.hpp"
+diff --git a/src/slic3r/GUI/Gizmos/GLGizmosManager.cpp b/src/slic3r/GUI/Gizmos/GLGizmosManager.cpp
+index 40c272fcb..b2c54497d 100644
+--- a/src/slic3r/GUI/Gizmos/GLGizmosManager.cpp
++++ b/src/slic3r/GUI/Gizmos/GLGizmosManager.cpp
+@@ -18,6 +18,7 @@
+ #include "slic3r/GUI/Gizmos/GLGizmoFdmSupports.hpp"
+ #include "slic3r/GUI/Gizmos/GLGizmoFuzzySkin.hpp"
+ #include "slic3r/GUI/Gizmos/GLGizmoBrimEars.hpp"
++#include "slic3r/GUI/Gizmos/GLGizmoStrength.hpp"
+ #include "slic3r/GUI/Gizmos/GLGizmoCut.hpp"
+ //#include "slic3r/GUI/Gizmos/GLGizmoFaceDetector.hpp"
+ //#include "slic3r/GUI/Gizmos/GLGizmoHollow.hpp"
+@@ -191,6 +192,9 @@ void GLGizmosManager::switch_gizmos_icon_filename()
+         case (EType::BrimEars):
+             gizmo->set_icon_filename(m_is_dark ? "toolbar_brimears_dark.svg" : "toolbar_brimears.svg");
+             break;
++        case (EType::Strength):
++            gizmo->set_icon_filename(m_is_dark ? "toolbar_strength_dark.svg" : "toolbar_strength.svg");
++            break;
+ #ifdef SLIC3R_CAD
+         case (EType::Primitive):
+             gizmo->set_icon_filename(m_is_dark ? "toolbar_modifier_cube_dark.svg" : "toolbar_modifier_cube.svg");
+@@ -244,6 +248,7 @@ bool GLGizmosManager::init()
+     m_gizmos.emplace_back(new GLGizmoAssembly(m_parent, m_is_dark ? "toolbar_assembly_dark.svg" : "toolbar_assembly.svg", EType::Assembly));
+     m_gizmos.emplace_back(new GLGizmoSimplify(m_parent, "reduce_triangles.svg", EType::Simplify));
+     m_gizmos.emplace_back(new GLGizmoBrimEars(m_parent, m_is_dark ? "toolbar_brimears_dark.svg" : "toolbar_brimears.svg", EType::BrimEars));
++    m_gizmos.emplace_back(new GLGizmoStrength(m_parent, m_is_dark ? "toolbar_strength_dark.svg" : "toolbar_strength.svg", EType::Strength));
+ #ifdef SLIC3R_CAD
+     // Registered last: Primitive and Sketch are the final entries before Undefined, so
+     // omitting them leaves every preceding m_gizmos index (indexed by EType) untouched.
+@@ -566,6 +571,8 @@ bool GLGizmosManager::gizmo_event(SLAGizmoEventType action, const Vec2d& mouse_p
+         return dynamic_cast<GLGizmoMeshBoolean*>(m_gizmos[MeshBoolean].get())->gizmo_event(action, mouse_position, shift_down, alt_down, control_down);
+     else if (m_current == BrimEars)
+         return dynamic_cast<GLGizmoBrimEars*>(m_gizmos[BrimEars].get())->gizmo_event(action, mouse_position, shift_down, alt_down, control_down);
++    else if (m_current == Strength)
++        return dynamic_cast<GLGizmoStrength*>(m_gizmos[Strength].get())->gizmo_event(action, mouse_position, shift_down, alt_down, control_down);
+     else
+         return false;
+ }
+@@ -576,6 +583,7 @@ bool GLGizmosManager::is_paint_gizmo()
+            m_current == EType::MmSegmentation ||
+            m_current == EType::FuzzySkin ||
+            m_current == EType::TextureDisplacement ||
++           m_current == EType::Strength ||
+            m_current == EType::Seam;
+ }
+ 
+@@ -695,7 +703,7 @@ bool GLGizmosManager::on_mouse_wheel(const wxMouseEvent &evt)
+ {
+     bool processed = false;
+ 
+-    if (/*m_current == SlaSupports || m_current == Hollow ||*/ m_current == FdmSupports || m_current == Seam || m_current == MmSegmentation || m_current == FuzzySkin || m_current == BrimEars) {
++    if (/*m_current == SlaSupports || m_current == Hollow ||*/ m_current == FdmSupports || m_current == Seam || m_current == MmSegmentation || m_current == FuzzySkin || m_current == BrimEars || m_current == Strength) {
+         float rot = (float)evt.GetWheelRotation() / (float)evt.GetWheelDelta();
+         if (gizmo_event((rot > 0.f ? SLAGizmoEventType::MouseWheelUp : SLAGizmoEventType::MouseWheelDown), Vec2d::Zero(), evt.ShiftDown(), evt.AltDown()
+             // BBS
+@@ -1459,7 +1467,7 @@ bool GLGizmosManager::activate_gizmo(EType type)
+     GLGizmoBase& new_gizmo = *m_gizmos[type];
+     if (!new_gizmo.is_activable()) return false;
+ 
+-    if (type == Seam || type == FdmSupports || type == FuzzySkin) {
++    if (type == Seam || type == FdmSupports || type == FuzzySkin || type == Strength) {
+         if (wxGetApp().app_config != nullptr && wxGetApp().app_config->get_bool(SETTING_OPENGL_REALISTIC_MODE)) {
+             m_restore_realistic_view_after_paint = true;
+             wxGetApp().app_config->set_bool(SETTING_OPENGL_REALISTIC_MODE, false);
+@@ -1546,6 +1554,8 @@ std::string get_name_from_gizmo_etype(GLGizmosManager::EType type)
+         return "Fuzzy Skin Painting";
+     case GLGizmosManager::EType::TextureDisplacement:
+         return "Texture Displacement";
++    case GLGizmosManager::EType::Strength:
++        return "Strength Check";
+     default:
+         return "";
+     }
+diff --git a/src/slic3r/GUI/Gizmos/GLGizmosManager.hpp b/src/slic3r/GUI/Gizmos/GLGizmosManager.hpp
+index 2903b3877..16d23204e 100644
+--- a/src/slic3r/GUI/Gizmos/GLGizmosManager.hpp
++++ b/src/slic3r/GUI/Gizmos/GLGizmosManager.hpp
+@@ -91,6 +91,7 @@ public:
+         Assembly,
+         Simplify,
+         BrimEars,
++        Strength,
+ #ifdef SLIC3R_CAD
+         // Both need the CAD kernel (GeometryEngine); keep them last so that with
+         // SLIC3R_CAD off the enum matches upstream's numbering exactly.
+diff --git a/tests/libslic3r/CMakeLists.txt b/tests/libslic3r/CMakeLists.txt
+index 3f2938d56..1f126b3a5 100644
+--- a/tests/libslic3r/CMakeLists.txt
++++ b/tests/libslic3r/CMakeLists.txt
+@@ -40,6 +40,7 @@ add_executable(${_TEST_NAME}_tests
+     test_obj.cpp
+     test_step.cpp
+     test_stl.cpp
++    test_strength_analysis.cpp
+     test_triangle_selector.cpp
+     test_meshboolean.cpp
+     test_marchingsquares.cpp
+diff --git a/tests/libslic3r/test_strength_analysis.cpp b/tests/libslic3r/test_strength_analysis.cpp
+new file mode 100644
+index 000000000..1fd20f590
+--- /dev/null
++++ b/tests/libslic3r/test_strength_analysis.cpp
+@@ -0,0 +1,123 @@
++#include <catch2/catch_all.hpp>
++
++#include "libslic3r/Feature/StrengthAnalysis/StrengthAnalysis.hpp"
++#include "libslic3r/TriangleMesh.hpp"
++
++using namespace Slic3r;
++using namespace Slic3r::Feature::StrengthAnalysis;
++using Catch::Matchers::WithinAbs;
++using Catch::Matchers::WithinRel;
++
++namespace {
++
++// Facets of `its` lying in the plane coordinate[axis] == value, as if painted.
++indexed_triangle_set face(const indexed_triangle_set &its, int axis, float value)
++{
++    indexed_triangle_set out;
++    out.vertices = its.vertices;
++    for (const Vec3i32 &f : its.indices)
++        if (std::all_of(f.begin(), f.end(), [&](int v) { return std::abs(its.vertices[v][axis] - value) < 1e-4f; }))
++            out.indices.push_back(f);
++    return out;
++}
++
++constexpr double LENGTH = 100., WIDTH = 10., HEIGHT = 10., LOAD = 10.;
++
++// A WIDTH x HEIGHT solid bar along X, held at x = 0 and pushed down at x = LENGTH.
++LoadCase cantilever(const indexed_triangle_set &bar)
++{
++    return {face(bar, 0, 0.f), face(bar, 0, float(LENGTH)), Vec3d(0., 0., -LOAD)};
++}
++
++PrintSettings solid()
++{
++    PrintSettings p;
++    p.infill = 1.;
++    return p;
++}
++
++} // namespace
++
++TEST_CASE("Cantilever stress and deflection follow beam theory", "[StrengthAnalysis]")
++{
++    const indexed_triangle_set bar = its_make_cube(LENGTH, WIDTH, HEIGHT);
++    const Material            &pla = *find_material("PLA");
++    const Result               res = analyse(bar, cantilever(bar), pla, solid());
++    REQUIRE(res.ok());
++
++    // Critical cut next to the fixture, where the moment arm is longest.
++    CHECK(res.axis == 0);
++    CHECK(res.mode == Mode::Bending);
++    CHECK_THAT(res.critical_point.x(), WithinAbs(0., 0.02 * LENGTH));
++    const double sigma = LOAD * (LENGTH - res.critical_point.x()) / (WIDTH * HEIGHT * HEIGHT / 6.);
++    CHECK_THAT(res.stress, WithinRel(sigma, 0.02));
++    // A vertical cut runs along the beads, so it keeps more than layer adhesion alone.
++    CHECK_THAT(res.allowable, WithinRel(pla.uts * (pla.z_factor + 0.15), 1e-6));
++    CHECK_THAT(res.safety_factor, WithinRel(res.allowable / res.stress, 1e-9));
++
++    const double I = WIDTH * HEIGHT * HEIGHT * HEIGHT / 12.;
++    CHECK_THAT(res.deflection, WithinRel(LOAD * LENGTH * LENGTH * LENGTH / (3. * pla.modulus * I), 0.05));
++}
++
++TEST_CASE("Sparse infill weakens a part", "[StrengthAnalysis]")
++{
++    const indexed_triangle_set bar = its_make_cube(LENGTH, WIDTH, HEIGHT);
++    PrintSettings              sparse;
++    sparse.wall_loops = 2;
++    sparse.infill     = 0.15;
++    const Result full  = analyse(bar, cantilever(bar), default_material(), solid());
++    const Result light = analyse(bar, cantilever(bar), default_material(), sparse);
++    REQUIRE(full.ok());
++    REQUIRE(light.ok());
++    CHECK(light.safety_factor < full.safety_factor);
++    CHECK(light.deflection > full.deflection);
++}
++
++TEST_CASE("Load across layers is limited by layer adhesion", "[StrengthAnalysis]")
++{
++    // The same bar standing up: held at the bottom, pushed sideways at the top.
++    const indexed_triangle_set post = its_make_cube(WIDTH, HEIGHT, LENGTH);
++    const LoadCase             lc{face(post, 2, 0.f), face(post, 2, float(LENGTH)), Vec3d(LOAD, 0., 0.)};
++    const Material            &pla = *find_material("PLA");
++    const Result               res = analyse(post, lc, pla, solid());
++    REQUIRE(res.ok());
++    CHECK(res.axis == 2);
++    CHECK_THAT(res.allowable, WithinRel(pla.uts * pla.z_factor, 1e-6));
++}
++
++TEST_CASE("A load applied on the fixture stresses nothing", "[StrengthAnalysis]")
++{
++    // Pushed down on the very face it is held by: no cut separates the load from the fixture.
++    const indexed_triangle_set bar    = its_make_cube(LENGTH, WIDTH, HEIGHT);
++    const indexed_triangle_set bottom = face(bar, 2, 0.f);
++    const LoadCase             lc{bottom, bottom, Vec3d(0., 0., -LOAD)};
++    CHECK_FALSE(analyse(bar, lc, default_material(), solid()).ok());
++}
++
++TEST_CASE("Unpainted fixture or load is reported", "[StrengthAnalysis]")
++{
++    const indexed_triangle_set bar = its_make_cube(LENGTH, WIDTH, HEIGHT);
++    LoadCase                   lc  = cantilever(bar);
++    lc.fixture.indices.clear();
++    CHECK_FALSE(analyse(bar, lc, default_material(), solid()).ok());
++    lc = cantilever(bar);
++    lc.load.indices.clear();
++    CHECK_FALSE(analyse(bar, lc, default_material(), solid()).ok());
++}
++
++TEST_CASE("Filament types resolve to material properties", "[StrengthAnalysis]")
++{
++    REQUIRE(find_material("petg-cf") != nullptr);
++    CHECK(std::string(find_material("petg-cf")->name) == "PETG-CF");
++    CHECK(std::string(find_material("PA6-CF")->name) == "PA-CF");
++    CHECK(find_material("unobtainium") == nullptr);
++}
++
++TEST_CASE("Hole stress concentration follows Peterson", "[StrengthAnalysis]")
++{
++    CHECK_THAT(kt_hole(0.01, 100.), WithinAbs(3., 0.01));
++    CHECK_THAT(kt_hole(5., 10.), WithinRel(3. - 3.13 * 0.5 + 3.66 * 0.25 - 1.53 * 0.125, 1e-9));
++    CHECK(kt_hole(0., 10.) == 1.);
++    CHECK(notch_sensitivity(4.) == 1.);
++    CHECK(notch_sensitivity(400.) == 0.4);
++}
