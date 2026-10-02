@@ -30,14 +30,16 @@ It uses the object's real orientation, wall loops, infill density, line width,
 layer height and filament type. The load case is a what-if check, so it is never
 written to the model, the G-code or the project file.
 
-To apply it to an OrcaSlicer checkout and build:
+The same change is on the
+[`feature/strength-check`](https://github.com/Karusa/OrcaSlicer/tree/feature/strength-check)
+branch of a fork of OrcaSlicer. To apply it to an OrcaSlicer checkout and build:
 
 ```bash
 git apply /path/to/orca-strength-check/orcaslicer/strength-check.patch
 ```
 
 The patch was made against OrcaSlicer commit
-[`d1d14329d`](https://github.com/OrcaSlicer/OrcaSlicer/commit/d1d14329d95fa9f8bd13c24efecb16d9c7eb1e1a).
+[`222c6a2df`](https://github.com/OrcaSlicer/OrcaSlicer/commit/222c6a2df50e4dee7139ff7bf27b7fac56a36c5d).
 Code merged into OrcaSlicer is distributed under OrcaSlicer's AGPL-3.0 license;
 Apache-2.0 code may be included in AGPL-3.0 projects.
 

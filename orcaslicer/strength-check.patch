@@ -116,10 +116,10 @@ index 000000000..11e886268
 @@ -0,0 +1 @@
 +<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40"><path d="M5,5h2v30h-2z" style="fill:#b6b6b6"/><path d="M7,8l-3,3M7,14l-3,3M7,20l-3,3M7,26l-3,3M7,32l-3,3" style="fill:none;stroke:#b6b6b6;stroke-width:1"/><path d="M7,17.5h21.5a1,1,0,0,1,1,1v3a1,1,0,0,1-1,1h-21.5z" style="fill:none;stroke:#b6b6b6;stroke-width:1"/><path d="M27.5,4v9" style="fill:none;stroke:#009688;stroke-width:1.5"/><path d="M24,11.5l3.5,5l3.5,-5z" style="fill:#009688"/><path d="M7,26c8,0.5,15,2.5,21,6" style="fill:none;stroke:#009688;stroke-width:1;stroke-dasharray:2,1.5"/></svg>
 diff --git a/src/libslic3r/CMakeLists.txt b/src/libslic3r/CMakeLists.txt
-index 185741246..da660dbc7 100644
+index ef15304c8..b45e02599 100644
 --- a/src/libslic3r/CMakeLists.txt
 +++ b/src/libslic3r/CMakeLists.txt
-@@ -139,6 +139,8 @@ set(lisbslic3r_sources
+@@ -136,6 +136,8 @@ set(lisbslic3r_sources
      FaceDetector.hpp
      Feature/FuzzySkin/FuzzySkin.cpp
      Feature/FuzzySkin/FuzzySkin.hpp
@@ -617,7 +617,7 @@ index 000000000..4122dd05e
 +
 +} // namespace Slic3r::Feature::StrengthAnalysis
 diff --git a/src/slic3r/CMakeLists.txt b/src/slic3r/CMakeLists.txt
-index 46c32ff23..a3b23d0e2 100644
+index b74247e33..1f391511c 100644
 --- a/src/slic3r/CMakeLists.txt
 +++ b/src/slic3r/CMakeLists.txt
 @@ -186,6 +186,8 @@ set(SLIC3R_GUI_SOURCES
@@ -630,10 +630,10 @@ index 46c32ff23..a3b23d0e2 100644
      #GUI/Gizmos/GLGizmoHollow.hpp
      GUI/Gizmos/GLGizmoMeasure.cpp
 diff --git a/src/slic3r/GUI/GLCanvas3D.cpp b/src/slic3r/GUI/GLCanvas3D.cpp
-index 01ff6de71..970a50ddf 100644
+index 622568e29..30f5ef479 100644
 --- a/src/slic3r/GUI/GLCanvas3D.cpp
 +++ b/src/slic3r/GUI/GLCanvas3D.cpp
-@@ -1650,7 +1650,8 @@ void GLCanvas3D::toggle_model_objects_visibility(bool visible, const ModelObject
+@@ -1755,7 +1755,8 @@ void GLCanvas3D::toggle_model_objects_visibility(bool visible, const ModelObject
                      if (  (gizmo_type == GLGizmosManager::FdmSupports
                          || gizmo_type == GLGizmosManager::Seam
                          || gizmo_type == GLGizmosManager::Cut
@@ -643,7 +643,7 @@ index 01ff6de71..970a50ddf 100644
                          && !vol->is_modifier) {
                          vol->force_neutral_color = true;
                      }
-@@ -4425,7 +4426,8 @@ void GLCanvas3D::on_mouse(wxMouseEvent& evt)
+@@ -4566,7 +4567,8 @@ void GLCanvas3D::on_mouse(wxMouseEvent& evt)
                      && m_gizmos.get_current_type() != GLGizmosManager::Seam
                      && m_gizmos.get_current_type() != GLGizmosManager::Cut
                      && m_gizmos.get_current_type() != GLGizmosManager::MmSegmentation
@@ -653,7 +653,7 @@ index 01ff6de71..970a50ddf 100644
                      m_rectangle_selection.start_dragging(m_mouse.position, evt.ShiftDown() ? GLSelectionRectangle::Select : GLSelectionRectangle::Deselect);
  
                      if (!has_mouse_capture())  // ORCA keep tracking mouse position while drag active and cursor not in window bounds
-@@ -4610,7 +4612,7 @@ void GLCanvas3D::on_mouse(wxMouseEvent& evt)
+@@ -4751,7 +4753,7 @@ void GLCanvas3D::on_mouse(wxMouseEvent& evt)
                  const Vec3d rot = (Vec3d(pos.x(), pos.y(), 0.) - m_mouse.drag.start_position_3D) * (PI * TRACKBALLSIZE / 180.) * mult;
                  if (this->m_canvas_type == ECanvasType::CanvasAssembleView || m_gizmos.get_current_type() == GLGizmosManager::FdmSupports ||
                      m_gizmos.get_current_type() == GLGizmosManager::Seam || m_gizmos.get_current_type() == GLGizmosManager::MmSegmentation ||
@@ -662,7 +662,7 @@ index 01ff6de71..970a50ddf 100644
                      // Orca: Reuse the centralized pivot policy for scene-oriented tools.
                      const std::optional<Vec3d> rotate_target = get_camera_orbit_target(ECameraNavigationType::Mouse);
                      if (rotate_target.has_value())
-@@ -10704,7 +10706,8 @@ std::optional<Vec3d> GLCanvas3D::get_camera_orbit_target(ECameraNavigationType n
+@@ -11079,7 +11081,8 @@ std::optional<Vec3d> GLCanvas3D::get_camera_orbit_target(ECameraNavigationType n
      const GLGizmosManager::EType gizmo_type = m_gizmos.get_current_type();
      const bool use_scene_target = m_canvas_type == ECanvasType::CanvasAssembleView ||
          gizmo_type == GLGizmosManager::FdmSupports || gizmo_type == GLGizmosManager::Seam ||
@@ -672,7 +672,7 @@ index 01ff6de71..970a50ddf 100644
      if (use_scene_target) {
          if (!m_selection.is_empty())
              return m_selection.get_bounding_box().center();
-@@ -10747,7 +10750,7 @@ bool GLCanvas3D::is_bed_visible() const
+@@ -11122,7 +11125,7 @@ bool GLCanvas3D::is_bed_visible() const
  
      const auto type = m_gizmos.get_current_type();
      return type != GLGizmosManager::FdmSupports && type != GLGizmosManager::Seam &&
@@ -682,10 +682,10 @@ index 01ff6de71..970a50ddf 100644
  
  Vec3d GLCanvas3D::get_camera_pan_anchor(Camera& camera, ECameraNavigationType navigation_type,
 diff --git a/src/slic3r/GUI/Gizmos/GLGizmoPainterBase.hpp b/src/slic3r/GUI/Gizmos/GLGizmoPainterBase.hpp
-index 19856603f..f3449b2a7 100644
+index a98f303fe..79a85ac6f 100644
 --- a/src/slic3r/GUI/Gizmos/GLGizmoPainterBase.hpp
 +++ b/src/slic3r/GUI/Gizmos/GLGizmoPainterBase.hpp
-@@ -28,7 +28,8 @@ enum class PainterGizmoType {
+@@ -38,7 +38,8 @@ enum class PainterGizmoType {
      SEAM,
      MM_SEGMENTATION,
      FUZZY_SKIN,
@@ -695,7 +695,7 @@ index 19856603f..f3449b2a7 100644
  };
  
  class TriangleSelectorGUI : public TriangleSelector {
-@@ -315,14 +316,15 @@ protected:
+@@ -325,14 +326,15 @@ protected:
  
      TriangleSelector::ClippingPlane get_clipping_plane_in_volume_coordinates(const Transform3d &trafo) const;
  
@@ -1330,7 +1330,7 @@ index 1d1d03627..f56174cd1 100644
  // BBS
  #include "slic3r/GUI/Gizmos/GLGizmoAdvancedCut.hpp"
 diff --git a/src/slic3r/GUI/Gizmos/GLGizmosManager.cpp b/src/slic3r/GUI/Gizmos/GLGizmosManager.cpp
-index 40c272fcb..b2c54497d 100644
+index 3eaaf814b..73627669c 100644
 --- a/src/slic3r/GUI/Gizmos/GLGizmosManager.cpp
 +++ b/src/slic3r/GUI/Gizmos/GLGizmosManager.cpp
 @@ -18,6 +18,7 @@
@@ -1341,7 +1341,7 @@ index 40c272fcb..b2c54497d 100644
  #include "slic3r/GUI/Gizmos/GLGizmoCut.hpp"
  //#include "slic3r/GUI/Gizmos/GLGizmoFaceDetector.hpp"
  //#include "slic3r/GUI/Gizmos/GLGizmoHollow.hpp"
-@@ -191,6 +192,9 @@ void GLGizmosManager::switch_gizmos_icon_filename()
+@@ -212,6 +213,9 @@ void GLGizmosManager::switch_gizmos_icon_filename()
          case (EType::BrimEars):
              gizmo->set_icon_filename(m_is_dark ? "toolbar_brimears_dark.svg" : "toolbar_brimears.svg");
              break;
@@ -1351,7 +1351,7 @@ index 40c272fcb..b2c54497d 100644
  #ifdef SLIC3R_CAD
          case (EType::Primitive):
              gizmo->set_icon_filename(m_is_dark ? "toolbar_modifier_cube_dark.svg" : "toolbar_modifier_cube.svg");
-@@ -244,6 +248,7 @@ bool GLGizmosManager::init()
+@@ -265,6 +269,7 @@ bool GLGizmosManager::init()
      m_gizmos.emplace_back(new GLGizmoAssembly(m_parent, m_is_dark ? "toolbar_assembly_dark.svg" : "toolbar_assembly.svg", EType::Assembly));
      m_gizmos.emplace_back(new GLGizmoSimplify(m_parent, "reduce_triangles.svg", EType::Simplify));
      m_gizmos.emplace_back(new GLGizmoBrimEars(m_parent, m_is_dark ? "toolbar_brimears_dark.svg" : "toolbar_brimears.svg", EType::BrimEars));
@@ -1359,7 +1359,7 @@ index 40c272fcb..b2c54497d 100644
  #ifdef SLIC3R_CAD
      // Registered last: Primitive and Sketch are the final entries before Undefined, so
      // omitting them leaves every preceding m_gizmos index (indexed by EType) untouched.
-@@ -566,6 +571,8 @@ bool GLGizmosManager::gizmo_event(SLAGizmoEventType action, const Vec2d& mouse_p
+@@ -599,6 +604,8 @@ bool GLGizmosManager::gizmo_event(SLAGizmoEventType action, const Vec2d& mouse_p
          return dynamic_cast<GLGizmoMeshBoolean*>(m_gizmos[MeshBoolean].get())->gizmo_event(action, mouse_position, shift_down, alt_down, control_down);
      else if (m_current == BrimEars)
          return dynamic_cast<GLGizmoBrimEars*>(m_gizmos[BrimEars].get())->gizmo_event(action, mouse_position, shift_down, alt_down, control_down);
@@ -1368,7 +1368,7 @@ index 40c272fcb..b2c54497d 100644
      else
          return false;
  }
-@@ -576,6 +583,7 @@ bool GLGizmosManager::is_paint_gizmo()
+@@ -609,6 +616,7 @@ bool GLGizmosManager::is_paint_gizmo()
             m_current == EType::MmSegmentation ||
             m_current == EType::FuzzySkin ||
             m_current == EType::TextureDisplacement ||
@@ -1376,7 +1376,7 @@ index 40c272fcb..b2c54497d 100644
             m_current == EType::Seam;
  }
  
-@@ -695,7 +703,7 @@ bool GLGizmosManager::on_mouse_wheel(const wxMouseEvent &evt)
+@@ -710,7 +718,7 @@ bool GLGizmosManager::on_mouse_wheel(const wxMouseEvent &evt)
  {
      bool processed = false;
  
@@ -1385,7 +1385,7 @@ index 40c272fcb..b2c54497d 100644
          float rot = (float)evt.GetWheelRotation() / (float)evt.GetWheelDelta();
          if (gizmo_event((rot > 0.f ? SLAGizmoEventType::MouseWheelUp : SLAGizmoEventType::MouseWheelDown), Vec2d::Zero(), evt.ShiftDown(), evt.AltDown()
              // BBS
-@@ -1459,7 +1467,7 @@ bool GLGizmosManager::activate_gizmo(EType type)
+@@ -1474,7 +1482,7 @@ bool GLGizmosManager::activate_gizmo(EType type)
      GLGizmoBase& new_gizmo = *m_gizmos[type];
      if (!new_gizmo.is_activable()) return false;
  
@@ -1394,7 +1394,7 @@ index 40c272fcb..b2c54497d 100644
          if (wxGetApp().app_config != nullptr && wxGetApp().app_config->get_bool(SETTING_OPENGL_REALISTIC_MODE)) {
              m_restore_realistic_view_after_paint = true;
              wxGetApp().app_config->set_bool(SETTING_OPENGL_REALISTIC_MODE, false);
-@@ -1546,6 +1554,8 @@ std::string get_name_from_gizmo_etype(GLGizmosManager::EType type)
+@@ -1561,6 +1569,8 @@ std::string get_name_from_gizmo_etype(GLGizmosManager::EType type)
          return "Fuzzy Skin Painting";
      case GLGizmosManager::EType::TextureDisplacement:
          return "Texture Displacement";
@@ -1404,10 +1404,10 @@ index 40c272fcb..b2c54497d 100644
          return "";
      }
 diff --git a/src/slic3r/GUI/Gizmos/GLGizmosManager.hpp b/src/slic3r/GUI/Gizmos/GLGizmosManager.hpp
-index 2903b3877..16d23204e 100644
+index 855e26c10..82a225e8e 100644
 --- a/src/slic3r/GUI/Gizmos/GLGizmosManager.hpp
 +++ b/src/slic3r/GUI/Gizmos/GLGizmosManager.hpp
-@@ -91,6 +91,7 @@ public:
+@@ -102,6 +102,7 @@ public:
          Assembly,
          Simplify,
          BrimEars,
@@ -1416,7 +1416,7 @@ index 2903b3877..16d23204e 100644
          // Both need the CAD kernel (GeometryEngine); keep them last so that with
          // SLIC3R_CAD off the enum matches upstream's numbering exactly.
 diff --git a/tests/libslic3r/CMakeLists.txt b/tests/libslic3r/CMakeLists.txt
-index 3f2938d56..1f126b3a5 100644
+index b93551917..e30a9b131 100644
 --- a/tests/libslic3r/CMakeLists.txt
 +++ b/tests/libslic3r/CMakeLists.txt
 @@ -40,6 +40,7 @@ add_executable(${_TEST_NAME}_tests
@@ -1426,7 +1426,7 @@ index 3f2938d56..1f126b3a5 100644
 +    test_strength_analysis.cpp
      test_triangle_selector.cpp
      test_meshboolean.cpp
-     test_marchingsquares.cpp
+     test_trianglemesh_slicer.cpp
 diff --git a/tests/libslic3r/test_strength_analysis.cpp b/tests/libslic3r/test_strength_analysis.cpp
 new file mode 100644
 index 000000000..1fd20f590
