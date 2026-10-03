@@ -19,16 +19,24 @@ The in-slicer tool is a patch against OrcaSlicer
 upstream. It adds:
 
 - `src/libslic3r/Feature/StrengthAnalysis`: the analysis, with no GUI
-  dependencies, and Catch2 tests in `tests/libslic3r/test_strength_analysis.cpp`
+  dependencies, and Catch2 tests in `tests/libslic3r/` and `tests/fff_print/`
 - `GLGizmoStrength`: the paint tool. Left mouse paints the fixture, right mouse
   paints the load, Shift erases. The Face tool selects whole faces. Drag the
   arrow to aim the load; it snaps to the axes, and ±X/±Y/±Z buttons set it
   exactly.
 - `docs/HLSD/strength-analysis.md`: the design
 
-It uses the object's real orientation, wall loops, infill density, line width,
-layer height and filament type. The load case is a what-if check, so it is never
-written to the model, the G-code or the project file.
+It answers in one of two ways: the **maximum load** the part takes at a chosen
+safety factor (1.5 by default), or the **safety factor at a load** you enter, which
+flashes red below 1. Stress colours and the deflected shape, optionally animated
+and exaggerated, show where and how it bends.
+
+When the plate is sliced, the check reads Orca's own sliced layers, so modifiers,
+per-part settings, variable layer height and solid infill all count. Before
+slicing, it lays the part out from the settings: walls, top and bottom skins and
+sparse infill. Either way it uses the part's real orientation and filament type.
+The load case is a what-if check, so it is never written to the model, the
+G-code or the project file.
 
 The same change is on the
 [`feature/strength-check`](https://github.com/Karusa/OrcaSlicer/tree/feature/strength-check)

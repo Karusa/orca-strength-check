@@ -1,22 +1,30 @@
 diff --git a/docs/HLSD/strength-analysis.md b/docs/HLSD/strength-analysis.md
 new file mode 100644
-index 000000000..378e2c5f7
+index 000000000..15190836a
 --- /dev/null
 +++ b/docs/HLSD/strength-analysis.md
-@@ -0,0 +1,97 @@
+@@ -0,0 +1,148 @@
 +# Strength check — High Level Design
 +
 +## Purpose and scope
 +
-+The strength check answers "will this printed part hold this load?" before the
-+part is printed. The user paints where the part is held (fixture) and where the
-+load is applied, aims the load with an arrow, enters it in kg, lb or N, and gets
-+a safety factor, the weakest cut, its stress and the deflection at the load.
++The strength check answers "will this printed part hold?" before the part is
++printed. The user paints where the part is held (fixture) and where it is loaded,
++aims the load with an arrow, and gets one of two answers:
++
++- **Maximum load** (the default): the largest load the part takes at a chosen
++  safety factor, 1.5 unless changed. Newcomers rarely know what load to expect.
++- **Check a load**: the safety factor at a load entered in kg, lb or N. A safety
++  factor below 1 flashes red.
++
++Both come with the weakest cut, its stress, and the deflection at the load. The
++part can be shown in stress colours and in its deflected shape, optionally
++animated and exaggerated.
 +
 +It is an estimate, not FEA. It is meant to catch the common failures of printed
-+parts: layers splitting under bending, too few walls, sparse infill and holes.
-+The slicer already knows the part's orientation on the plate and its print
-+settings, so the check uses both instead of asking the user for them.
++parts: layers splitting under bending, too few walls or skins, sparse infill and
++holes. The slicer already knows the part's orientation on the plate and how it
++will be printed, so the check uses both.
 +
 +The load case is a what-if check, not a print setting. It changes neither the
 +model, G-code nor the project file, and it never schedules background
@@ -24,60 +32,89 @@ index 000000000..378e2c5f7
 +
 +## Components
 +
-+- `libslic3r/Feature/StrengthAnalysis` holds the analysis: `analyse()` takes the
-+  object mesh and painted facets in world coordinates, a force vector, material
-+  properties and the print settings that matter. It has no GUI dependencies, and
-+  it is covered by `tests/libslic3r/test_strength_analysis.cpp`.
++- `libslic3r/Feature/StrengthAnalysis` holds the analysis. It has no GUI
++  dependencies. Tests are in `tests/libslic3r/test_strength_analysis.cpp`, for the
++  analysis itself, and `tests/fff_print/test_strength_analysis.cpp`, for sliced
++  layers.
 +- `GLGizmoStrength` is a painter gizmo. The left button paints the fixture
 +  (`EnforcerBlockerType::ENFORCER`), the right button paints the load (`BLOCKER`),
 +  and Shift erases. The Face tool (smart fill) selects whole faces, which is what
 +  a fixture or a load usually covers.
++
++## The printed part
++
++The analysis works on a stack of `PrintedLayer`s in world coordinates. Each holds
++the layer's outline and its fills, each fill an area with a density: 1 for walls
++and solid infill, the sparse infill density elsewhere. There are two sources.
++
++- **Sliced object.** `layers_from_print_object()` reads the `PrintObject` once
++  `posPrepareInfill` is done. Walls are each region's slices minus its
++  `fill_expolygons`. `stInternal` surfaces take the region's
++  `sparse_infill_density`, `stInternalVoid` none, and every other fill surface
++  counts as solid. Modifiers, height range modifiers, per-part settings, variable
++  layer height and Orca's own solid infill decisions all come through this way.
++  The gizmo uses it whenever the plate is sliced and not being re-sliced. Editing
++  settings invalidates the step, so stale slices are never used.
++- **Settings only.** `layers_from_mesh()` lays the mesh out as Orca would. It
++  uses walls of `wall_loops` × inner wall line width. Skins go wherever the
++  layers within `top_shell_layers` above or `bottom_shell_layers` below do not
++  cover a point; each of those counts is raised to cover `top_shell_thickness`
++  and `bottom_shell_thickness`. Sparse infill fills the rest. The object's own
++  settings override the presets. The panel says which source was used, and
++  suggests slicing to include modifiers.
 +
 +## Load case state
 +
 +Paint is held in the gizmo, keyed by `ModelObject` id, one
 +`TriangleSplittingData` per model part, together with the part's facet count.
 +Paint whose facet count no longer matches the mesh is dropped rather than
-+applied to different triangles. Paint, direction, magnitude and unit go through
-+the gizmo's `on_save`/`on_load`, so undo and redo work while the gizmo is open.
-+Nothing is written to `ModelVolume`, so `.3mf` files, slicing and the
-+`FacetsAnnotation` users are untouched.
++applied to different triangles. Paint, direction, load mode, load, unit and target
++safety factor go through the gizmo's `on_save`/`on_load`, so undo and redo work
++while the gizmo is open. Nothing is written to `ModelVolume`, so `.3mf` files,
++slicing and the `FacetsAnnotation` users are untouched.
 +
 +The arrow's tip sits on the centroid of the painted load area, and it points
 +along the force. Dragging the arrow swings its tail over a sphere around the
 +load point, like a trackball, with rotate-gizmo rings showing that sphere. The
 +direction snaps to an axis within 4°. Preset buttons and X/Y/Z fields set the
-+direction exactly. Any edit after a run marks the results out of date until the
-+next Analyze.
++direction exactly.
++
++Every result is linear in the load, so the analysis runs once at 1 N.
++`scale_load()` turns it into either answer, so changing the load, the unit, the
++mode or the target safety factor needs no new run. Changing the paint or the
++direction marks the results out of date until the next Analyze.
 +
 +## Analysis
 +
-+The object is cut by planes normal to X, Y and Z at layer-height spacing, using
-+`slice_mesh_ex` on a cyclically permuted copy of the mesh for X and Y. A cyclic
-+permutation keeps handedness, so contour orientation stays valid. Only cuts that
-+separate the fixture from the load are made. A cut separates them when the
-+fixture's extent along that axis lies entirely on one side of it and the load
-+point on the other. A fixture straddling a cut means the load reaches ground
-+without crossing it.
++Cuts are made between every pair of layers and on a regular grid normal to X and
++Y. Only cuts that separate the fixture from the load are made. A cut separates
++them when the fixture's extent along that axis lies entirely on one side of it
++and the load point on the other. A fixture straddling a cut means the load
++reaches ground without crossing it.
 +
 +For each such cut the part beyond it is a free body, so the internal force is the
 +applied force and the internal moment is `r × F` about the cut's centroid. This
 +is exact for a statically determinate single load, whatever the shape of the
-+load path. The cut's area, centroid, second moments and extreme fibre distances
-+come from Green's theorem over the ExPolygon loops.
++load path.
 +
-+A mesh is solid but a print is not. Each cut is filled as printed: wall loops of
-+the inner wall line width around its boundary, and sparse infill density inside.
-+Area and second moments are scaled by that fraction. Torsion uses a
-+Saint-Venant solid above 85% fill and a Bredt closed shell below.
++- **Cuts between layers** take the layer above's fills. Area, centroid and second
++  moments come from Green's theorem over the fill loops, weighted by density.
++- **Vertical cuts** are built from rectangles: where the cut line crosses each
++  fill, times that layer's height. Edges are bucketed by the grid lines they
++  cross, so the cost follows the edge count rather than edges × cuts.
++
++So walls and skins sit where they are printed, at the outer fibres of the
++section, instead of being smeared over it. Torsion uses a Saint-Venant solid
++above 85% fill, and otherwise a Bredt closed shell from the solid area and the
++section perimeter.
 +
 +Stress at a cut is the axial stress, plus bending about both in-plane axes,
 +combined by von Mises with transverse shear (1.5 V/A) and torsional shear. The
 +two kinds of shear are added, which is conservative. Allowable stress is the
 +filament's tensile strength:
 +
-+- times its layer-adhesion factor for a Z cut, which runs between layers
-+- times that factor plus 0.15 (at most 1) for an X or Y cut, which runs across
++- times its layer-adhesion factor for a cut between layers
++- times that factor plus 0.15 (at most 1) for a vertical cut, which runs across
 +  beads
 +- divided by the fatigue notch factor `Kf = 1 + q(Kt − 1)` where the cut passes
 +  a hole
@@ -86,21 +123,35 @@ index 000000000..378e2c5f7
 +to the outer contour. `q` falls from 1 for brittle filaments (elongation ≤ 5%)
 +to 0.4 for ductile ones. The cut with the lowest safety factor is reported.
 +
-+Deflection at the load point uses the unit-load method, integrating
-+`m·M / EI` along the axis on which the load sits furthest from the fixture.
++## Deflected shape and stress colours
++
++The deflected shape follows the axis on which the load sits furthest from the
++fixture. Curvature `M / EI` at each cut along that axis is integrated from the
++fixture outwards into a rotation and a displacement of the section centroids.
++Past the last cut the part moves rigidly. A point of the part is displaced with
++its section: `w + θ × (p − c)`. The deflection reported at the load is the same
++integral, so the number and the drawn shape agree.
++
++Stress colours give each point the utilization (stress over allowable) of the
++most loaded cut through it. Blue is unloaded and red is at the breaking point.
++The gizmo draws the result mesh as eight colour bands with the existing
++`gouraud_light` shader. When animated, it rebuilds the displaced mesh only while
++the animation phase changes, and requests frames only while animating or
++flashing.
 +
 +## Materials
 +
 +`find_material()` maps a profile's `filament_type` to strength, modulus,
 +layer-adhesion factor and elongation. The values are typical of reasonably tuned
-+prints. Unknown types fall back to PLA, and the results panel says so. The
-+object's own settings override the presets, as they do when slicing.
++prints. Unknown types fall back to PLA, and the results panel says so.
 +
 +## Limits
 +
 +Beam theory assumes slender load paths and one load. Stocky blocks, contact
-+stresses, buckling, creep and print defects are out of scope. An L-shaped path
-+is handled for stress, but its deflection counts only the longest run.
++stresses, buckling, creep and print defects are out of scope. Bead orientation
++within a layer and the infill pattern are not modelled; sparse infill counts by
++density alone. An L-shaped path is handled for stress, but its deflected shape
++follows only the longest run, and twist is not drawn.
 diff --git a/resources/images/toolbar_strength.svg b/resources/images/toolbar_strength.svg
 new file mode 100644
 index 000000000..3cbe4b067
@@ -130,24 +181,28 @@ index ef15304c8..b45e02599 100644
      Feature/Interlocking/VoxelUtils.cpp
 diff --git a/src/libslic3r/Feature/StrengthAnalysis/StrengthAnalysis.cpp b/src/libslic3r/Feature/StrengthAnalysis/StrengthAnalysis.cpp
 new file mode 100644
-index 000000000..278d94244
+index 000000000..d73703807
 --- /dev/null
 +++ b/src/libslic3r/Feature/StrengthAnalysis/StrengthAnalysis.cpp
-@@ -0,0 +1,399 @@
+@@ -0,0 +1,624 @@
 +#include "StrengthAnalysis.hpp"
 +
-+#include "libslic3r/ExPolygon.hpp"
++#include "libslic3r/BoundingBox.hpp"
++#include "libslic3r/ClipperUtils.hpp"
 +#include "libslic3r/I18N.hpp"
++#include "libslic3r/Layer.hpp"
++#include "libslic3r/Print.hpp"
 +#include "libslic3r/TriangleMesh.hpp"
 +#include "libslic3r/TriangleMeshSlicer.hpp"
 +
 +#include <boost/algorithm/string/case_conv.hpp>
 +#include <boost/algorithm/string/trim.hpp>
++#include <tbb/parallel_for.h>
 +
 +#include <algorithm>
 +#include <array>
 +#include <cmath>
-+#include <optional>
++#include <tuple>
 +
 +namespace Slic3r::Feature::StrengthAnalysis {
 +
@@ -172,24 +227,25 @@ index 000000000..278d94244
 +    {"ASA-CF", "ABS-CF"},   {"ABS-GF", "ABS-CF"},   {"TPU-AMS", "TPU"}, {"PLA-AERO", "PLA"},
 +}};
 +
-+constexpr double KT_CAP            = 6.;
 +constexpr double SHEAR_PEAK        = 1.5;  // peak / mean transverse shear, rectangular section
 +constexpr double SOLID_THRESHOLD   = 0.85; // printed / enclosed area above which torsion sees a solid
 +constexpr double TRIM              = 0.01; // ends of the part left uncut, as a fraction of its span
 +constexpr int    MAX_CUTS_PER_AXIS = 600;
-+constexpr int    HOLE_PROBE_CUTS   = 12;
++constexpr double MIN_CUT_STEP      = 0.2;  // mm between vertical cuts
++constexpr int    HOLE_PROBE_LAYERS = 12;
 +constexpr double MIN_HOLE_RADIUS   = 0.3;
++constexpr double SOLID_DENSITY     = 0.999;
 +
 +struct Section
 +{
 +    int    axis = 2;
 +    double pos  = 0.;
 +    Vec3d  centroid;
-+    double area = 0.;      // printed material, mm^2
-+    double S_u = 0., S_v = 0.; // section moduli resisting moments about the in-plane axes u, v
-+    double I_u = 0., I_v = 0.;
-+    double Q = 0.;         // torsional section modulus, mm^3
-+    double strength = 0.;  // MPa after anisotropy and notch factor
++    double area = 0.;          // printed material, density weighted, mm^2
++    double I_u = 0., I_v = 0.; // second moments resisting moments about the in-plane axes u, v
++    double S_u = 0., S_v = 0.; // section moduli for the same
++    double Q = 0.;             // torsional section modulus, mm^3
++    double strength = 0.;      // MPa after anisotropy and notch factor
 +    double kt = 1.;
 +};
 +
@@ -203,15 +259,47 @@ index 000000000..278d94244
 +int u_of(int axis) { return (axis + 1) % 3; }
 +int v_of(int axis) { return (axis + 2) % 3; }
 +
-+// Cyclic permutation so that `axis` becomes Z. Being cyclic it keeps handedness,
-+// hence contour orientation.
-+indexed_triangle_set axis_to_z(const indexed_triangle_set &its, int axis)
++// Area integrals in a cut's own plane (u, v): Iuu = integral of v^2, Ivv = integral of u^2.
++struct Moments
 +{
-+    indexed_triangle_set out = its;
-+    if (axis != 2)
-+        for (stl_vertex &p : out.vertices)
-+            p = stl_vertex(p[u_of(axis)], p[v_of(axis)], p[axis]);
-+    return out;
++    double A = 0., Su = 0., Sv = 0., Iuu = 0., Ivv = 0.;
++
++    void add(const Moments &o, double w)
++    {
++        A += w * o.A, Su += w * o.Su, Sv += w * o.Sv, Iuu += w * o.Iuu, Ivv += w * o.Ivv;
++    }
++    void add_rect(double u0, double u1, double v0, double v1, double w)
++    {
++        const double du = u1 - u0, dv = v1 - v0;
++        A += w * du * dv;
++        Su += w * 0.5 * (u1 * u1 - u0 * u0) * dv;
++        Sv += w * 0.5 * (v1 * v1 - v0 * v0) * du;
++        Iuu += w * du * (v1 * v1 * v1 - v0 * v0 * v0) / 3.;
++        Ivv += w * dv * (u1 * u1 * u1 - u0 * u0 * u0) / 3.;
++    }
++};
++
++// Green's theorem over every loop; holes run clockwise and subtract themselves.
++Moments moments_of(const ExPolygons &area)
++{
++    Moments m;
++    auto    add_loop = [&m](const Polygon &poly) {
++        for (size_t i = 0; i < poly.points.size(); ++i) {
++            const Vec2d  a = unscale(poly.points[i]), b = unscale(poly.points[(i + 1) % poly.points.size()]);
++            const double cr = a.x() * b.y() - b.x() * a.y();
++            m.A += 0.5 * cr;
++            m.Su += (a.x() + b.x()) * cr / 6.;
++            m.Sv += (a.y() + b.y()) * cr / 6.;
++            m.Iuu += (a.y() * a.y() + a.y() * b.y() + b.y() * b.y()) * cr / 12.;
++            m.Ivv += (a.x() * a.x() + a.x() * b.x() + b.x() * b.x()) * cr / 12.;
++        }
++    };
++    for (const ExPolygon &ex : area) {
++        add_loop(ex.contour);
++        for (const Polygon &h : ex.holes)
++            add_loop(h);
++    }
++    return m;
 +}
 +
 +double triangle_area(const indexed_triangle_set &its, const Vec3i32 &f)
@@ -245,19 +333,19 @@ index 000000000..278d94244
 +{
 +    double best = std::numeric_limits<double>::max();
 +    for (size_t i = 0; i < poly.points.size(); ++i) {
-+        const Vec2d a = unscale(poly.points[i]), b = unscale(poly.points[(i + 1) % poly.points.size()]);
-+        const Vec2d ab = b - a;
-+        const double t = std::clamp(ab.squaredNorm() > 0. ? (p - a).dot(ab) / ab.squaredNorm() : 0., 0., 1.);
-+        best = std::min(best, (a + t * ab - p).norm());
++        const Vec2d  a = unscale(poly.points[i]), b = unscale(poly.points[(i + 1) % poly.points.size()]);
++        const Vec2d  ab = b - a;
++        const double t  = std::clamp(ab.squaredNorm() > 0. ? (p - a).dot(ab) / ab.squaredNorm() : 0., 0., 1.);
++        best            = std::min(best, (a + t * ab - p).norm());
 +    }
 +    return best;
 +}
 +
-+// Holes in one cut, with the net-section stress concentration each causes.
-+std::vector<Hole> holes_of(const ExPolygons &cut)
++// Holes in a layer, with the net-section stress concentration each causes.
++std::vector<Hole> holes_of(const ExPolygons &outline)
 +{
 +    std::vector<Hole> out;
-+    for (const ExPolygon &ex : cut)
++    for (const ExPolygon &ex : outline)
 +        for (const Polygon &hole : ex.holes) {
 +            const double r = std::sqrt(std::abs(unscaled<double>(unscaled<double>(hole.area()))) / PI);
 +            if (r < MIN_HOLE_RADIUS)
@@ -270,155 +358,220 @@ index 000000000..278d94244
 +    return out;
 +}
 +
-+// Gross geometry of a cut in its own plane (u, v), by Green's theorem over every loop.
-+struct CutGeometry
++// Vertical holes, for the vertical cuts that pass through them.
++std::vector<Hole> probe_holes(const PrintedLayers &layers)
 +{
-+    double area = 0., enclosed = 0., perimeter = 0., outer_perimeter = 0.;
-+    Vec2d  centroid = Vec2d::Zero();
-+    double I_u = 0., I_v = 0., c_u = 0., c_v = 0.;
-+};
-+
-+std::optional<CutGeometry> geometry_of(const ExPolygons &cut)
-+{
-+    CutGeometry g;
-+    double   su = 0., sv = 0., iu = 0., iv = 0.;
-+    auto     add_loop = [&](const Polygon &poly, bool outer) {
-+        for (size_t i = 0; i < poly.points.size(); ++i) {
-+            const Vec2d  a = unscale(poly.points[i]), b = unscale(poly.points[(i + 1) % poly.points.size()]);
-+            const double cr = a.x() * b.y() - b.x() * a.y();
-+            g.area += 0.5 * cr;
-+            su += (a.x() + b.x()) * cr;
-+            sv += (a.y() + b.y()) * cr;
-+            iu += (a.y() * a.y() + a.y() * b.y() + b.y() * b.y()) * cr;
-+            iv += (a.x() * a.x() + a.x() * b.x() + b.x() * b.x()) * cr;
-+            const double len = (b - a).norm();
-+            g.perimeter += len;
-+            if (outer)
-+                g.outer_perimeter += len;
-+        }
-+    };
-+    for (const ExPolygon &ex : cut) {
-+        add_loop(ex.contour, true);
-+        g.enclosed += unscaled<double>(unscaled<double>(ex.contour.area()));
-+        for (const Polygon &h : ex.holes)
-+            add_loop(h, false);
-+    }
-+    if (g.area <= 1e-6)
-+        return std::nullopt;
-+    g.centroid = Vec2d(su, sv) / (6. * g.area);
-+    g.I_u      = std::max(0., iu / 12. - g.area * sqr(g.centroid.y()));
-+    g.I_v      = std::max(0., iv / 12. - g.area * sqr(g.centroid.x()));
-+    for (const ExPolygon &ex : cut)
-+        for (const Point &p : ex.contour.points) {
-+            const Vec2d d = unscale(p) - g.centroid;
-+            g.c_u         = std::max(g.c_u, std::abs(d.x()));
-+            g.c_v         = std::max(g.c_v, std::abs(d.y()));
-+        }
-+    return g;
-+}
-+
-+std::vector<Section> cut_axis(const indexed_triangle_set &mesh, int axis, const BoundingBoxf3 &bbox, const BoundingBoxf3 &fixture,
-+                              const Vec3d &load_point, const std::vector<Hole> &holes, const Material &mat, const PrintSettings &print)
-+{
-+    const double span = bbox.size()[axis] * (1. - 2. * TRIM);
-+    if (span <= 1e-6)
-+        return {};
-+    const double lo = bbox.min[axis] + bbox.size()[axis] * TRIM;
-+    const int    n  = std::clamp(int(std::round(span / std::max(print.layer_height, 0.01))), 4, MAX_CUTS_PER_AXIS);
-+
-+    std::vector<float> zs;
-+    for (int i = 0; i < n; ++i)
-+        if (const double pos = lo + span * i / (n - 1); separates(fixture, axis, pos, load_point))
-+            zs.push_back(float(pos));
-+    if (zs.empty())
-+        return {};
-+
-+    const std::vector<ExPolygons> cuts     = slice_mesh_ex(axis_to_z(mesh, axis), zs);
-+    const double                  q        = notch_sensitivity(mat.elongation);
-+    // Across layers only adhesion holds; along a vertical cut the beads carry most of it.
-+    const double                  strength = mat.uts * (axis == 2 ? mat.z_factor : std::min(1., mat.z_factor + 0.15));
-+    const double                  shell    = std::max(0, print.wall_loops) * print.wall_width;
-+
-+    std::vector<Section> out;
-+    for (size_t i = 0; i < cuts.size(); ++i) {
-+        const std::optional<CutGeometry> g = geometry_of(cuts[i]);
-+        if (!g)
-+            continue;
-+        // A mesh is solid; the print is walls around the boundary plus sparse infill inside.
-+        const double wall_area = std::min(g->area, g->perimeter * shell);
-+        const double printed   = wall_area + std::clamp(print.infill, 0., 1.) * (g->area - wall_area);
-+        const double frac      = printed / g->area;
-+
-+        Section s;
-+        s.axis              = axis;
-+        s.pos               = zs[i];
-+        s.centroid[axis]    = zs[i];
-+        s.centroid[u_of(axis)] = g->centroid.x();
-+        s.centroid[v_of(axis)] = g->centroid.y();
-+        s.area              = printed;
-+        s.I_u               = g->I_u * frac;
-+        s.I_v               = g->I_v * frac;
-+        s.S_u               = g->c_v > 0. ? s.I_u / g->c_v : 0.;
-+        s.S_v               = g->c_u > 0. ? s.I_v / g->c_u : 0.;
-+        if (frac >= SOLID_THRESHOLD)
-+            s.Q = 0.2 * std::pow(printed, 1.5);              // compact solid, Saint-Venant
-+        else if (g->outer_perimeter > 0.)
-+            s.Q = 2. * g->enclosed * std::min(shell, g->area / g->outer_perimeter); // closed thin-walled shell, Bredt
-+
-+        if (axis == 2) {
-+            for (const Hole &h : holes_of(cuts[i]))
-+                s.kt = std::max(s.kt, h.kt);
-+        } else {
-+            for (const Hole &h : holes)
-+                if (std::abs(h.center[axis] - s.pos) <= h.radius)
-+                    s.kt = std::max(s.kt, h.kt);
-+        }
-+        s.strength = strength / (1. + q * (s.kt - 1.));
-+        out.push_back(s);
-+    }
-+    return out;
-+}
-+
-+// Holes through the part seen from above, for the cuts that pass through them sideways.
-+std::vector<Hole> probe_holes(const indexed_triangle_set &mesh, const BoundingBoxf3 &bbox)
-+{
-+    std::vector<float> zs;
-+    for (int k = 0; k < HOLE_PROBE_CUTS; ++k)
-+        zs.push_back(float(bbox.min.z() + bbox.size().z() * (k + 0.5) / HOLE_PROBE_CUTS));
 +    std::vector<Hole> out;
-+    for (const ExPolygons &cut : slice_mesh_ex(mesh, zs))
-+        for (const Hole &h : holes_of(cut))
++    for (int k = 0; k < HOLE_PROBE_LAYERS; ++k)
++        for (const Hole &h : holes_of(layers[(2 * k + 1) * layers.size() / (2 * HOLE_PROBE_LAYERS)].outline))
 +            if (std::none_of(out.begin(), out.end(), [&h](const Hole &o) { return (o.center - h.center).norm() < 1.; }))
 +                out.push_back(h);
 +    return out;
 +}
 +
-+// Deflection at the load point by the unit-load method, integrated along the axis
-+// on which the load sits furthest from the fixture.
-+double deflection(const std::vector<Section> &sections, const Vec3d &load_point, const Vec3d &fixture_center, const Vec3d &force, double modulus)
++// Accumulated cut through printed material, before it becomes a Section.
++struct CutData
++{
++    Moments      printed;        // density weighted
++    double       gross     = 0.; // everything inside the outline
++    double       solid     = 0.; // walls and solid infill
++    double       perimeter = 0.;
++    BoundingBoxf extent;         // in (u, v)
++};
++
++std::optional<Section> make_section(int axis, double pos, const CutData &cut, double kt, const Material &mat)
++{
++    const Moments &m = cut.printed;
++    if (m.A <= 1e-6 || !cut.extent.defined)
++        return std::nullopt;
++    Section s;
++    s.axis = axis;
++    s.pos  = pos;
++    s.area = m.A;
++    const Vec2d c(m.Su / m.A, m.Sv / m.A);
++    s.centroid[axis]       = pos;
++    s.centroid[u_of(axis)] = c.x();
++    s.centroid[v_of(axis)] = c.y();
++    s.I_u                  = std::max(0., m.Iuu - m.A * c.y() * c.y());
++    s.I_v                  = std::max(0., m.Ivv - m.A * c.x() * c.x());
++    const double c_u       = std::max(cut.extent.max.x() - c.x(), c.x() - cut.extent.min.x());
++    const double c_v       = std::max(cut.extent.max.y() - c.y(), c.y() - cut.extent.min.y());
++    s.S_u                  = c_v > 0. ? s.I_u / c_v : 0.;
++    s.S_v                  = c_u > 0. ? s.I_v / c_u : 0.;
++    if (m.A >= SOLID_THRESHOLD * cut.gross)
++        s.Q = 0.2 * std::pow(m.A, 1.5); // compact solid, Saint-Venant
++    else if (cut.perimeter > 0.)
++        s.Q = 2. * cut.gross * cut.solid / cut.perimeter; // closed shell of walls and skins, Bredt
++    // Across layers only adhesion holds; along a vertical cut the beads carry most of it.
++    const double strength = mat.uts * (axis == 2 ? mat.z_factor : std::min(1., mat.z_factor + 0.15));
++    s.kt                  = kt;
++    s.strength            = strength / (1. + notch_sensitivity(mat.elongation) * (kt - 1.));
++    return s;
++}
++
++// Cuts between layers, each through the layer above the interface.
++std::vector<Section> cut_between_layers(const PrintedLayers &layers, const BoundingBoxf3 &fixture, const Vec3d &load_point,
++                                        const Material &mat)
++{
++    std::vector<Section> out;
++    for (size_t i = 1; i < layers.size(); ++i) {
++        const PrintedLayer &layer = layers[i];
++        if (!separates(fixture, 2, layer.z_bottom, load_point))
++            continue;
++        CutData cut;
++        for (const LayerFill &fill : layer.fills) {
++            const Moments m = moments_of(fill.area);
++            cut.printed.add(m, fill.density);
++            if (fill.density >= SOLID_DENSITY)
++                cut.solid += m.A;
++        }
++        cut.gross = moments_of(layer.outline).A;
++        for (const ExPolygon &ex : layer.outline)
++            for (size_t k = 0; k < ex.contour.points.size(); ++k) {
++                const Vec2d a = unscale(ex.contour.points[k]);
++                cut.perimeter += (unscale(ex.contour.points[(k + 1) % ex.contour.points.size()]) - a).norm();
++                cut.extent.merge(a);
++            }
++        double kt = 1.;
++        for (const Hole &h : holes_of(layer.outline))
++            kt = std::max(kt, h.kt);
++        if (std::optional<Section> s = make_section(2, layer.z_bottom, cut, kt, mat))
++            out.push_back(*s);
++    }
++    return out;
++}
++
++// Vertical cuts normal to X or Y on a regular grid. Each layer adds rectangles: the
++// spans where the cut line crosses each fill, times the layer height. Edges are
++// bucketed by the grid lines they cross, so the cost follows the edge count rather
++// than edges times cuts.
++std::vector<Section> cut_across_layers(const PrintedLayers &layers, int axis, const BoundingBoxf3 &bbox, const BoundingBoxf3 &fixture,
++                                       const Vec3d &load_point, const std::vector<Hole> &holes, const Material &mat)
++{
++    const double span = bbox.size()[axis] * (1. - 2. * TRIM);
++    if (span <= 1e-6)
++        return {};
++    const double lo   = bbox.min[axis] + bbox.size()[axis] * TRIM;
++    const int    n    = std::clamp(int(span / MIN_CUT_STEP) + 1, 4, MAX_CUTS_PER_AXIS);
++    const double step = span / (n - 1);
++    const int    h    = 1 - axis; // the horizontal axis lying in the cut
++
++    std::vector<char> active(n);
++    for (int k = 0; k < n; ++k)
++        active[k] = separates(fixture, axis, lo + k * step, load_point);
++    if (std::none_of(active.begin(), active.end(), [](char a) { return a; }))
++        return {};
++
++    std::vector<CutData>             cuts(n);
++    std::vector<std::vector<double>> crossings(n);
++    std::vector<int>                 touched;
++    for (const PrintedLayer &layer : layers) {
++        const double z0 = layer.z_bottom, z1 = layer.z_top;
++        for (const LayerFill &fill : layer.fills) {
++            auto add_loop = [&](const Polygon &poly) {
++                for (size_t i = 0; i < poly.points.size(); ++i) {
++                    const Vec2d p  = unscale(poly.points[i]), q = unscale(poly.points[(i + 1) % poly.points.size()]);
++                    const int   k0 = std::max(0, int(std::ceil((std::min(p[axis], q[axis]) - lo) / step)));
++                    const int   k1 = std::min(n - 1, int(std::floor((std::max(p[axis], q[axis]) - lo) / step)));
++                    for (int k = k0; k <= k1; ++k) {
++                        const double c = lo + k * step;
++                        if (!active[k] || (p[axis] > c) == (q[axis] > c))
++                            continue;
++                        if (crossings[k].empty())
++                            touched.push_back(k);
++                        crossings[k].push_back(p[h] + (c - p[axis]) / (q[axis] - p[axis]) * (q[h] - p[h]));
++                    }
++                }
++            };
++            for (const ExPolygon &ex : fill.area) {
++                add_loop(ex.contour);
++                for (const Polygon &hole : ex.holes)
++                    add_loop(hole);
++            }
++            for (int k : touched) {
++                std::vector<double> &x = crossings[k];
++                std::sort(x.begin(), x.end());
++                CutData &cut = cuts[k];
++                for (size_t i = 0; i + 1 < x.size(); i += 2) {
++                    // (u, v) is (h, z) for a cut normal to X and (z, h) for one normal to Y.
++                    const double u0 = axis == 0 ? x[i] : z0, u1 = axis == 0 ? x[i + 1] : z1;
++                    const double v0 = axis == 0 ? z0 : x[i], v1 = axis == 0 ? z1 : x[i + 1];
++                    cut.printed.add_rect(u0, u1, v0, v1, fill.density);
++                    const double a = (x[i + 1] - x[i]) * (z1 - z0);
++                    cut.gross += a;
++                    if (fill.density >= SOLID_DENSITY)
++                        cut.solid += a;
++                    cut.extent.merge(Vec2d(u0, v0));
++                    cut.extent.merge(Vec2d(u1, v1));
++                }
++                x.clear();
++            }
++            touched.clear();
++        }
++    }
++
++    std::vector<Section> out;
++    for (int k = 0; k < n; ++k) {
++        if (!active[k])
++            continue;
++        const double pos = lo + k * step;
++        CutData     &cut = cuts[k];
++        cut.perimeter    = cut.extent.defined ? 2. * (cut.extent.size().x() + cut.extent.size().y()) : 0.;
++        double kt        = 1.;
++        for (const Hole &hole : holes)
++            if (std::abs(hole.center[axis] - pos) <= hole.radius)
++                kt = std::max(kt, hole.kt);
++        if (std::optional<Section> s = make_section(axis, pos, cut, kt, mat))
++            out.push_back(*s);
++    }
++    return out;
++}
++
++// Curvature of the beam axis at a cut, as a rotation per unit length.
++Vec3d curvature(const Section &s, const Vec3d &load_point, const Vec3d &force, double modulus)
++{
++    const Vec3d M = (load_point - s.centroid).cross(force);
++    Vec3d       k = Vec3d::Zero();
++    if (s.I_u > 0.)
++        k[u_of(s.axis)] = M[u_of(s.axis)] / (modulus * s.I_u);
++    if (s.I_v > 0.)
++        k[v_of(s.axis)] = M[v_of(s.axis)] / (modulus * s.I_v);
++    return k;
++}
++
++// Deflected shape along the axis on which the load sits furthest from the fixture,
++// integrating curvature from the fixture outwards. Torsional twist is not included.
++void deflected_shape(Result &res, const std::vector<Section> &sections, const Vec3d &fixture_center, const BoundingBoxf3 &fixture,
++                     const Vec3d &force, double modulus)
 +{
 +    int dom = 0;
 +    for (int a = 1; a < 3; ++a)
-+        if (std::abs(load_point[a] - fixture_center[a]) > std::abs(load_point[dom] - fixture_center[dom]))
++        if (std::abs(res.load_point[a] - fixture_center[a]) > std::abs(res.load_point[dom] - fixture_center[dom]))
 +            dom = a;
 +    std::vector<const Section *> run;
 +    for (const Section &s : sections)
 +        if (s.axis == dom)
 +            run.push_back(&s);
 +    if (run.size() < 2 || modulus <= 0.)
-+        return 0.;
-+    const Vec3d dir   = force.normalized();
-+    double      total = 0.;
-+    for (size_t k = 0; k < run.size(); ++k) {
-+        const double ds = std::abs(run[std::min(k + 1, run.size() - 1)]->pos - run[k > 0 ? k - 1 : 0]->pos) /
-+                          (k == 0 || k + 1 == run.size() ? 1. : 2.);
-+        const Vec3d m = (load_point - run[k]->centroid).cross(dir);
-+        if (run[k]->I_u > 0.)
-+            total += sqr(m[u_of(dom)]) / run[k]->I_u * ds;
-+        if (run[k]->I_v > 0.)
-+            total += sqr(m[v_of(dom)]) / run[k]->I_v * ds;
++        return;
++    std::sort(run.begin(), run.end(), [](const Section *a, const Section *b) { return a->pos < b->pos; });
++    if (fixture.min[dom] > run.front()->pos)
++        std::reverse(run.begin(), run.end());
++
++    res.run_axis = dom;
++    Vec3d theta = Vec3d::Zero(), w = Vec3d::Zero();
++    Vec3d kappa = curvature(*run.front(), res.load_point, force, modulus);
++    res.run.push_back({run.front()->pos, run.front()->centroid, w, theta});
++    for (size_t k = 1; k < run.size(); ++k) {
++        const Vec3d next_kappa = curvature(*run[k], res.load_point, force, modulus);
++        const Vec3d next_theta = theta + 0.5 * (kappa + next_kappa) * std::abs(run[k]->pos - run[k - 1]->pos);
++        w += (0.5 * (theta + next_theta)).cross(run[k]->centroid - run[k - 1]->centroid);
++        theta = next_theta;
++        kappa = next_kappa;
++        res.run.push_back({run[k]->pos, run[k]->centroid, w, theta});
 +    }
-+    return force.norm() * total / modulus;
++    // Beyond the last cut the part is unloaded and moves rigidly with the end of the run.
++    res.deflection = displacement_at(res, res.load_point).dot(force.normalized());
 +}
 +
 +} // namespace
@@ -460,14 +613,68 @@ index 000000000..278d94244
 +    return std::max(1., 3. - 3.13 * x + 3.66 * x * x - 1.53 * x * x * x);
 +}
 +
-+double notch_sensitivity(double elongation)
++double notch_sensitivity(double elongation) { return elongation <= 5. ? 1. : std::max(0.4, 1. - (elongation - 5.) / 60.); }
++
++PrintedLayers layers_from_mesh(const indexed_triangle_set &mesh, const PrintSettings &print)
 +{
-+    return elongation <= 5. ? 1. : std::max(0.4, 1. - (elongation - 5.) / 60.);
++    const BoundingBoxf3 bbox = facets_bounding_box(mesh);
++    if (!bbox.defined || bbox.size().z() <= 0.)
++        return {};
++    const int          n = std::max(1, int(std::round(bbox.size().z() / std::max(print.layer_height, 0.01))));
++    const double       h = bbox.size().z() / n;
++    std::vector<float> zs(n);
++    for (int i = 0; i < n; ++i)
++        zs[i] = float(bbox.min.z() + (i + 0.5) * h);
++    const std::vector<ExPolygons> outlines = slice_mesh_ex(mesh, zs);
++
++    PrintedLayers layers(n);
++    tbb::parallel_for(0, n, [&](int i) {
++        PrintedLayer &layer = layers[i];
++        layer.z_bottom      = bbox.min.z() + i * h;
++        layer.z_top         = layer.z_bottom + h;
++        layer.outline       = outlines[i];
++        // Sparse infill only where the layers below and above cover it, as Orca does for skins.
++        ExPolygons sparse = offset_ex(outlines[i], -float(scaled(std::max(0, print.wall_loops) * print.wall_width)));
++        for (int k = 1; k <= print.bottom_layers && !sparse.empty(); ++k)
++            sparse = i - k >= 0 ? intersection_ex(sparse, outlines[i - k]) : ExPolygons();
++        for (int k = 1; k <= print.top_layers && !sparse.empty(); ++k)
++            sparse = i + k < n ? intersection_ex(sparse, outlines[i + k]) : ExPolygons();
++        layer.fills = {{diff_ex(outlines[i], sparse), 1.}, {std::move(sparse), std::clamp(print.infill, 0., 1.)}};
++    });
++    return layers;
 +}
 +
-+Result analyse(const indexed_triangle_set &mesh, const LoadCase &lc, const Material &mat, const PrintSettings &print)
++PrintedLayers layers_from_print_object(const PrintObject &object, const PrintInstance &instance, double z_min)
 +{
-+    Result res;
++    auto placed = [&instance](ExPolygons area) {
++        for (ExPolygon &ex : area)
++            ex.translate(instance.shift);
++        return area;
++    };
++    PrintedLayers out;
++    if (object.layers().empty())
++        return out;
++    // Layers start above any raft; the part itself sits at z_min.
++    const double z0 = object.layers().front()->print_z - object.layers().front()->height;
++    for (const Layer *layer : object.layers()) {
++        PrintedLayer &pl = out.emplace_back();
++        pl.z_bottom      = layer->print_z - layer->height - z0 + z_min;
++        pl.z_top         = layer->print_z - z0 + z_min;
++        pl.outline       = placed(layer->lslices);
++        for (const LayerRegion *region : layer->regions()) {
++            const double density = region->region().config().sparse_infill_density.value / 100.;
++            // Walls fill whatever the infill does not.
++            pl.fills.push_back({placed(diff_ex(to_expolygons(region->slices.surfaces), region->fill_expolygons)), 1.});
++            for (const Surface &s : region->fill_surfaces.surfaces)
++                pl.fills.push_back({placed({s.expolygon}), s.surface_type == stInternal ? density : s.surface_type == stInternalVoid ? 0. : 1.});
++        }
++    }
++    return out;
++}
++
++Result analyse(const PrintedLayers &layers, const LoadCase &lc, const Material &mat)
++{
++    Result                     res;
 +    const std::optional<Vec3d> load_point     = area_centroid(lc.load);
 +    const std::optional<Vec3d> fixture_center = area_centroid(lc.fixture);
 +    if (!fixture_center) {
@@ -482,23 +689,34 @@ index 000000000..278d94244
 +        res.error = _u8L("Enter a load greater than zero.");
 +        return res;
 +    }
++    if (layers.empty()) {
++        res.error = _u8L("The part has no printed layers.");
++        return res;
++    }
 +    res.load_point = *load_point;
 +
-+    const BoundingBoxf3 bbox    = bounding_box(mesh);
-+    const BoundingBoxf3 fixture = facets_bounding_box(lc.fixture);
-+    const std::vector<Hole> holes = probe_holes(mesh, bbox);
++    BoundingBoxf3 bbox;
++    for (const PrintedLayer &layer : layers)
++        for (const ExPolygon &ex : layer.outline)
++            for (const Point &p : ex.contour.points) {
++                const Vec2d q = unscale(p);
++                bbox.merge(Vec3d(q.x(), q.y(), layer.z_bottom));
++                bbox.merge(Vec3d(q.x(), q.y(), layer.z_top));
++            }
++    const BoundingBoxf3     fixture = facets_bounding_box(lc.fixture);
++    const std::vector<Hole> holes   = probe_holes(layers);
 +
-+    std::vector<Section> sections;
-+    for (int axis : {2, 0, 1}) {
-+        std::vector<Section> cut = cut_axis(mesh, axis, bbox, fixture, *load_point, holes, mat, print);
++    std::vector<Section> sections = cut_between_layers(layers, fixture, *load_point, mat);
++    for (int axis : {0, 1}) {
++        std::vector<Section> cut = cut_across_layers(layers, axis, bbox, fixture, *load_point, holes, mat);
 +        sections.insert(sections.end(), cut.begin(), cut.end());
 +    }
 +
-+    const Vec3d &F = lc.force;
++    const Vec3d &F        = lc.force;
 +    double       worst_sf = std::numeric_limits<double>::max();
 +    for (const Section &s : sections) {
 +        const int    a = s.axis, u = u_of(a), v = v_of(a);
-+        const Vec3d  M = (*load_point - s.centroid).cross(F); // N.mm
++        const Vec3d  M       = (*load_point - s.centroid).cross(F); // N.mm
 +        const double bending = (s.S_u > 0. ? std::abs(M[u]) / s.S_u : 0.) + (s.S_v > 0. ? std::abs(M[v]) / s.S_v : 0.);
 +        const double axial   = std::abs(F[a]) / s.area;
 +        const double tau_v   = SHEAR_PEAK * std::hypot(F[u], F[v]) / s.area;
@@ -510,6 +728,7 @@ index 000000000..278d94244
 +        const double vm  = std::sqrt(sigma * sigma + 3. * tau * tau);
 +        if (vm <= 1e-12)
 +            continue;
++        res.cuts.push_back({a, s.pos, vm / s.strength});
 +        const double sf = s.strength / vm;
 +        if (sf < worst_sf) {
 +            worst_sf           = sf;
@@ -528,33 +747,98 @@ index 000000000..278d94244
 +                         "without stressing the part. Paint a smaller fixture or load another area.");
 +        return res;
 +    }
-+    res.deflection = deflection(sections, *load_point, *fixture_center, F, mat.modulus);
++    std::sort(res.cuts.begin(), res.cuts.end(), [](const Cut &a, const Cut &b) { return std::tie(a.axis, a.pos) < std::tie(b.axis, b.pos); });
++    deflected_shape(res, sections, *fixture_center, fixture, F, mat.modulus);
 +    return res;
++}
++
++void scale_load(Result &res, double factor)
++{
++    res.stress *= factor;
++    res.safety_factor /= factor;
++    res.deflection *= factor;
++    for (Cut &cut : res.cuts)
++        cut.utilization *= factor;
++    for (BeamStation &st : res.run) {
++        st.displacement *= factor;
++        st.rotation *= factor;
++    }
++}
++
++Vec3d displacement_at(const Result &res, const Vec3d &p)
++{
++    if (res.run.empty())
++        return Vec3d::Zero();
++    const std::vector<BeamStation> &run = res.run;
++    const double                    sgn = run.size() > 1 && run[1].pos < run[0].pos ? -1. : 1.;
++    auto along = [&](double pos) { return (pos - run.front().pos) * sgn; };
++    const double s = along(p[res.run_axis]);
++    if (s <= 0.)
++        return Vec3d::Zero(); // the held side of the fixture edge
++    // First station beyond p along the run.
++    const auto it = std::upper_bound(run.begin() + 1, run.end(), s, [&](double s, const BeamStation &st) { return s < along(st.pos); });
++    const BeamStation &a = *(it - 1);
++    if (it == run.end())
++        return a.displacement + a.rotation.cross(p - a.centroid);
++    const BeamStation &b = *it;
++    const double       t = std::clamp((s - along(a.pos)) / (along(b.pos) - along(a.pos)), 0., 1.);
++    const Vec3d        w = (1. - t) * a.displacement + t * b.displacement;
++    const Vec3d        r = (1. - t) * a.rotation + t * b.rotation;
++    const Vec3d        c = (1. - t) * a.centroid + t * b.centroid;
++    return w + r.cross(p - c);
++}
++
++double utilization_at(const Result &res, const Vec3d &p)
++{
++    double worst = 0.;
++    for (int axis = 0; axis < 3; ++axis) {
++        const auto first = std::lower_bound(res.cuts.begin(), res.cuts.end(), axis, [](const Cut &c, int a) { return c.axis < a; });
++        const auto last  = std::upper_bound(first, res.cuts.end(), axis, [](int a, const Cut &c) { return a < c.axis; });
++        if (last - first < 2)
++            continue;
++        // Cuts are evenly spaced or one per layer: a point belongs to the nearest one
++        // within a cut spacing, else it lies outside the stressed part.
++        const auto   it      = std::lower_bound(first, last, p[axis], [](const Cut &c, double v) { return c.pos < v; });
++        const double spacing = ((last - 1)->pos - first->pos) / double(last - first - 1);
++        if (it != last && std::abs(it->pos - p[axis]) <= spacing)
++            worst = std::max(worst, it->utilization);
++        if (it != first && std::abs((it - 1)->pos - p[axis]) <= spacing)
++            worst = std::max(worst, (it - 1)->utilization);
++    }
++    return worst;
 +}
 +
 +} // namespace Slic3r::Feature::StrengthAnalysis
 diff --git a/src/libslic3r/Feature/StrengthAnalysis/StrengthAnalysis.hpp b/src/libslic3r/Feature/StrengthAnalysis/StrengthAnalysis.hpp
 new file mode 100644
-index 000000000..4122dd05e
+index 000000000..9f5ca471a
 --- /dev/null
 +++ b/src/libslic3r/Feature/StrengthAnalysis/StrengthAnalysis.hpp
-@@ -0,0 +1,77 @@
+@@ -0,0 +1,143 @@
 +#pragma once
 +
++#include "libslic3r/ExPolygon.hpp"
 +#include "libslic3r/Point.hpp"
 +
 +#include <admesh/stl.h>
 +
 +#include <optional>
 +#include <string>
++#include <vector>
 +
 +// Quick strength estimate of a printed part under one painted load case.
 +//
-+// This is beam theory on the part's real cross-sections, not FEA: every cut that
-+// separates the painted fixture from the painted load carries the load's moment
-+// about the cut's centroid, and its stress is checked against the strength of a
-+// printed section (walls + infill, weaker across layers, knocked down at holes).
++// This is beam theory on the part's printed cross-sections, not FEA: every cut that
++// separates the painted fixture from the painted load carries the load's force and
++// moment, and its stress is checked against the strength of the material printed
++// there. The part is described as a stack of printed layers, taken from the sliced
++// object when there is one, so modifiers and solid infill count.
 +// See docs/HLSD/strength-analysis.md.
++namespace Slic3r {
++class PrintObject;
++struct PrintInstance;
++} // namespace Slic3r
++
 +namespace Slic3r::Feature::StrengthAnalysis {
 +
 +struct Material
@@ -570,13 +854,43 @@ index 000000000..4122dd05e
 +const Material *find_material(const std::string &filament_type);
 +const Material &default_material();
 +
++// Area of a layer printed at one density: 1 for walls and solid infill, the sparse
++// infill density elsewhere.
++struct LayerFill
++{
++    ExPolygons area;
++    double     density;
++};
++
++// One printed layer, in world coordinates.
++struct PrintedLayer
++{
++    double            z_bottom = 0.;
++    double            z_top    = 0.;
++    ExPolygons        outline;
++    std::vector<LayerFill> fills;
++};
++using PrintedLayers = std::vector<PrintedLayer>;
++
++// Settings used to lay out a mesh as Orca would print it, when there are no sliced layers.
 +struct PrintSettings
 +{
-+    double layer_height = 0.2;  // mm, also the spacing of the analysed cuts
-+    double wall_width   = 0.45; // mm per wall loop
-+    int    wall_loops   = 2;
-+    double infill       = 0.15; // sparse infill density, 0..1
++    double layer_height  = 0.2;  // mm
++    double wall_width    = 0.45; // mm per wall loop
++    int    wall_loops    = 2;
++    int    top_layers    = 3;
++    int    bottom_layers = 3;
++    double infill        = 0.15; // sparse infill density, 0..1
 +};
++
++// Walls inset from each layer's outline, solid skins within top_layers of an upward
++// facing surface and bottom_layers of a downward facing one, sparse infill elsewhere.
++PrintedLayers layers_from_mesh(const indexed_triangle_set &mesh, const PrintSettings &print);
++
++// Layers of a sliced object, placed at one of its instances with the part's bottom at
++// z_min. Needs posPrepareInfill done; walls and solid infill count as solid, sparse
++// infill at its region's density, so modifiers and per-part settings are honoured.
++PrintedLayers layers_from_print_object(const PrintObject &object, const PrintInstance &instance, double z_min);
 +
 +struct LoadCase
 +{
@@ -587,25 +901,53 @@ index 000000000..4122dd05e
 +
 +enum class Mode { Bending, Tension, Shear, Torsion };
 +
++// One analysed cut: stress as a share of what the material there can take.
++struct Cut
++{
++    int    axis;
++    double pos;
++    double utilization;
++};
++
++// The deflected beam axis, sampled at the cuts along the run it is integrated over.
++struct BeamStation
++{
++    double pos;
++    Vec3d  centroid;
++    Vec3d  displacement; // mm
++    Vec3d  rotation;     // rad, as a rotation vector
++};
++
 +struct Result
 +{
 +    std::string error; // set when there is no answer, in user-facing wording
 +
-+    double safety_factor = 0.;
-+    double stress        = 0.; // von Mises at the critical cut, MPa
-+    double allowable     = 0.; // printed strength at that cut, MPa
-+    double kt            = 1.; // stress concentration at that cut
-+    Mode   mode          = Mode::Bending;
-+    int    axis          = 2;  // normal of the critical cut: 0 = X, 1 = Y, 2 = Z
++    double safety_factor  = 0.;
++    double stress         = 0.; // von Mises at the critical cut, MPa
++    double allowable      = 0.; // printed strength at that cut, MPa
++    double kt             = 1.; // stress concentration at that cut
++    Mode   mode           = Mode::Bending;
++    int    axis           = 2;  // normal of the critical cut: 0 = X, 1 = Y, 2 = Z
 +    Vec3d  critical_point = Vec3d::Zero(); // centroid of the critical cut
 +    Vec3d  load_point     = Vec3d::Zero();
 +    double deflection     = 0.; // mm at the load point, along the load
 +
++    std::vector<Cut>         cuts;          // sorted by axis, then position
++    int                      run_axis = -1; // axis the deflected shape follows
++    std::vector<BeamStation> run;           // ordered from the fixture outwards
++
 +    bool ok() const { return error.empty(); }
 +};
 +
-+// `mesh` is the whole object in world coordinates.
-+Result analyse(const indexed_triangle_set &mesh, const LoadCase &load_case, const Material &material, const PrintSettings &print);
++Result analyse(const PrintedLayers &layers, const LoadCase &load_case, const Material &material);
++
++// Everything in a Result is linear in the load: rescale it to `factor` times the load.
++void scale_load(Result &result, double factor);
++
++// Displacement of a world point of the part in the deflected shape, mm.
++Vec3d displacement_at(const Result &result, const Vec3d &point);
++// Utilization of the most loaded cut through a world point, 0 where nothing is stressed.
++double utilization_at(const Result &result, const Vec3d &point);
 +
 +// Area-weighted centroid of a set of facets, such as a painted load area.
 +std::optional<Vec3d> area_centroid(const indexed_triangle_set &its);
@@ -715,14 +1057,15 @@ index a98f303fe..79a85ac6f 100644
                                const std::vector<Transform3d>& trafo_matrices) const;
 diff --git a/src/slic3r/GUI/Gizmos/GLGizmoStrength.cpp b/src/slic3r/GUI/Gizmos/GLGizmoStrength.cpp
 new file mode 100644
-index 000000000..52fa40d24
+index 000000000..49fa94e4a
 --- /dev/null
 +++ b/src/slic3r/GUI/Gizmos/GLGizmoStrength.cpp
-@@ -0,0 +1,486 @@
+@@ -0,0 +1,703 @@
 +#include "GLGizmoStrength.hpp"
 +
 +#include "libslic3r/Geometry.hpp"
 +#include "libslic3r/Model.hpp"
++#include "libslic3r/Print.hpp"
 +#include "libslic3r/PresetBundle.hpp"
 +
 +#include "slic3r/GUI/Camera.hpp"
@@ -752,9 +1095,22 @@ index 000000000..52fa40d24
 +// Snap the aimed arrow onto an axis when it comes this close to one.
 +constexpr double AXIS_SNAP_DEG = 4.;
 +constexpr double ARROW_GRAB_PX = 10.;
++// An exaggerated deflection is drawn this large relative to the part.
++constexpr double EXAGGERATED_DEFLECTION = 0.1;
++constexpr double ANIMATION_PERIOD_S     = 2.;
++constexpr double FLASH_HZ               = 1.5;
 +
 +const ColorRGBA AxisColors[3] = {{0.9f, 0.2f, 0.2f, 0.6f}, {0.2f, 0.75f, 0.2f, 0.6f}, {0.25f, 0.45f, 1.f, 0.6f}};
 +const ColorRGBA CriticalColor = {0.9f, 0.1f, 0.1f, 1.f};
++// Utilization from 0 (blue) to the breaking point and beyond (red).
++const std::array<ColorRGBA, 8> StressColors{{{0.15f, 0.3f, 0.9f, 1.f},
++                                             {0.1f, 0.55f, 0.95f, 1.f},
++                                             {0.1f, 0.75f, 0.8f, 1.f},
++                                             {0.2f, 0.75f, 0.35f, 1.f},
++                                             {0.65f, 0.8f, 0.2f, 1.f},
++                                             {0.95f, 0.8f, 0.15f, 1.f},
++                                             {0.95f, 0.5f, 0.1f, 1.f},
++                                             {0.9f, 0.12f, 0.1f, 1.f}}};
 +
 +double distance_to_segment(const Vec2d &p, const Vec2d &a, const Vec2d &b)
 +{
@@ -815,19 +1171,20 @@ index 000000000..52fa40d24
 +
 +void GLGizmoStrength::on_save(cereal::BinaryOutputArchive &ar) const
 +{
-+    ar(m_paint, m_direction.x(), m_direction.y(), m_direction.z(), m_magnitude, m_unit);
++    ar(m_paint, m_direction.x(), m_direction.y(), m_direction.z(), m_magnitude, m_unit, m_load_mode, m_target_fos);
 +}
 +
 +void GLGizmoStrength::on_load(cereal::BinaryInputArchive &ar)
 +{
-+    ar(m_paint, m_direction.x(), m_direction.y(), m_direction.z(), m_magnitude, m_unit);
++    ar(m_paint, m_direction.x(), m_direction.y(), m_direction.z(), m_magnitude, m_unit, m_load_mode, m_target_fos);
 +    invalidate_result();
++    update_result();
 +    GLGizmoPainterBase::on_load(ar);
 +}
 +
 +void GLGizmoStrength::update_model_object()
 +{
-+    const ModelObject *mo = m_c->selection_info()->model_object();
++    const ModelObject *mo    = m_c->selection_info()->model_object();
 +    Paint             &paint = m_paint[mo->id().id];
 +    paint.clear();
 +    size_t idx = 0;
@@ -859,8 +1216,10 @@ index 000000000..52fa40d24
 +        ++idx;
 +    }
 +
-+    if (first_update)
-+        m_result.reset();
++    if (first_update) {
++        m_base_result.reset();
++        update_result();
++    }
 +    update_load_point();
 +}
 +
@@ -884,10 +1243,12 @@ index 000000000..52fa40d24
 +    m_arrow_length = std::clamp(0.35 * bbox.max_size(), 10., 60.);
 +}
 +
-+Vec3d GLGizmoStrength::force() const
++double GLGizmoStrength::unit_to_newton() const { return m_unit == Unit::Kilogram ? KG_TO_N : m_unit == Unit::Pound ? LB_TO_N : 1.; }
++
++std::string GLGizmoStrength::format_load(double newtons) const
 +{
-+    const double scale = m_unit == Unit::Kilogram ? KG_TO_N : m_unit == Unit::Pound ? LB_TO_N : 1.;
-+    return m_direction * double(m_magnitude) * scale;
++    const char *units[3] = {"kg", "lb", "N"};
++    return (boost::format("%1$.2f %2%") % (newtons / unit_to_newton()) % units[int(m_unit)]).str();
 +}
 +
 +void GLGizmoStrength::set_direction(const Vec3d &direction)
@@ -977,18 +1338,81 @@ index 000000000..52fa40d24
 +    shader->stop_using();
 +}
 +
++bool GLGizmoStrength::failed() const
++{
++    return m_result && m_result->ok() && !m_result_stale && m_load_mode == LoadMode::CheckLoad && m_result->safety_factor < 1.;
++}
++
++bool GLGizmoStrength::show_result_mesh() const
++{
++    return m_result && m_result->ok() && !m_result_stale && (m_show_stress || m_show_deflection) && !m_result_mesh.indices.empty();
++}
++
++// Rebuilds the result view: triangles bucketed into stress bands, displaced by
++// `phase` (0..1) of the drawn deflection.
++void GLGizmoStrength::update_result_mesh(double phase)
++{
++    double scale = 0.;
++    if (m_show_deflection) {
++        double max_d = 0.;
++        for (const Vec3d &d : m_vertex_displacement)
++            max_d = std::max(max_d, d.norm());
++        max_d *= m_result_load;
++        const double size = Slic3r::bounding_box(m_result_mesh).max_size();
++        scale = phase * m_result_load * (m_exaggerate && max_d > 0. ? std::max(1., EXAGGERATED_DEFLECTION * size / max_d) : 1.);
++    }
++
++    std::array<GLModel::Geometry, StressBands> bands;
++    for (GLModel::Geometry &g : bands)
++        g.format = {GLModel::Geometry::EPrimitiveType::Triangles, GLModel::Geometry::EVertexLayout::P3N3};
++    for (const Vec3i32 &f : m_result_mesh.indices) {
++        std::array<Vec3f, 3> p;
++        double               util = 0.;
++        for (int k = 0; k < 3; ++k) {
++            p[k] = m_result_mesh.vertices[f[k]] + (scale * m_vertex_displacement[f[k]]).cast<float>();
++            util += m_vertex_utilization[f[k]] * m_result_load / 3.;
++        }
++        const size_t band = m_show_stress ? size_t(std::clamp(int(util * (StressBands - 1) + 0.5), 0, int(StressBands) - 1)) : 0;
++        GLModel::Geometry &g = bands[band];
++        const Vec3f        n = (p[1] - p[0]).cross(p[2] - p[0]).normalized();
++        const unsigned int i = unsigned(g.vertices_count());
++        for (const Vec3f &v : p)
++            g.add_vertex(v, n);
++        g.add_triangle(i, i + 1, i + 2);
++    }
++    for (size_t b = 0; b < StressBands; ++b) {
++        m_stress_models[b].reset();
++        if (!bands[b].is_empty())
++            m_stress_models[b].init_from(std::move(bands[b]));
++    }
++    m_mesh_phase = phase;
++}
++
 +void GLGizmoStrength::render_painter_gizmo()
 +{
 +    const Selection &selection = m_parent.get_selection();
++    const double     t = std::chrono::duration<double>(std::chrono::steady_clock::now() - m_start_time).count();
 +
 +    glsafe(::glEnable(GL_BLEND));
 +    glsafe(::glEnable(GL_DEPTH_TEST));
 +
-+    render_triangles(selection);
-+    m_c->object_clipper()->render_cut();
-+    m_c->instances_hider()->render_cut();
-+    if (!m_arrow_hovered && !m_aiming)
-+        render_cursor();
++    if (show_result_mesh()) {
++        const bool   moving = m_show_deflection && m_animate;
++        const double phase  = !m_show_deflection ? 0. : moving ? 0.5 - 0.5 * std::cos(2. * PI * t / ANIMATION_PERIOD_S) : 1.;
++        if (m_mesh_phase < 0. || std::abs(phase - m_mesh_phase) > 0.004)
++            update_result_mesh(phase);
++        for (size_t b = 0; b < StressBands; ++b)
++            if (m_stress_models[b].is_initialized())
++                render_model(m_stress_models[b], Transform3d::Identity(), m_show_stress ? StressColors[b] : GLVolume::NEUTRAL_COLOR);
++        if (moving)
++            m_parent.request_extra_frame();
++    } else {
++        render_triangles(selection);
++        m_c->object_clipper()->render_cut();
++        m_c->instances_hider()->render_cut();
++        if (!m_arrow_hovered && !m_aiming)
++            render_cursor();
++    }
 +
 +    if (m_load_point) {
 +        const bool active = m_arrow_hovered || m_aiming;
@@ -1001,11 +1425,39 @@ index 000000000..52fa40d24
 +            render_model(m_ring, at * Geometry::rotation_transform({0.5 * PI, 0., 0.}), AxisColors[1]);
 +        }
 +    }
-+    if (m_result && m_result->ok() && !m_result_stale)
++    if (m_result && m_result->ok() && !m_result_stale) {
++        ColorRGBA color = CriticalColor;
++        if (failed()) {
++            color.a(float(0.35 + 0.65 * (0.5 + 0.5 * std::sin(2. * PI * FLASH_HZ * t))));
++            m_parent.request_extra_frame();
++        }
 +        render_model(m_marker, Geometry::translation_transform(m_result->critical_point) * Geometry::scale_transform(0.04 * m_arrow_length / 0.35),
-+                     CriticalColor);
++                     color);
++    }
 +
 +    glsafe(::glDisable(GL_BLEND));
++}
++
++// Printed layers of the sliced object, in world coordinates, when slicing is
++// complete and current: these carry modifiers, variable layer height and Orca's own
++// solid infill decisions. Null when the object has not been sliced since its last change.
++std::optional<SA::PrintedLayers> GLGizmoStrength::sliced_layers(double z_min) const
++{
++    Plater *plater = wxGetApp().plater();
++    if (plater->is_background_process_slicing())
++        return std::nullopt;
++    const ModelObject   *mo = m_c->selection_info()->model_object();
++    const ModelInstance *mi = mo->instances[m_parent.get_selection().get_instance_idx()];
++    for (const PrintObject *po : plater->fff_print().objects()) {
++        if (po->model_object()->id() != mo->id() || !po->is_step_done(posPrepareInfill) || po->layers().empty())
++            continue;
++        const auto inst = std::find_if(po->instances().begin(), po->instances().end(),
++                                       [mi](const PrintInstance &pi) { return pi.model_instance->id() == mi->id(); });
++        if (inst == po->instances().end())
++            return std::nullopt;
++        return SA::layers_from_print_object(*po, *inst, z_min);
++    }
++    return std::nullopt;
 +}
 +
 +void GLGizmoStrength::run_analysis()
@@ -1030,52 +1482,122 @@ index 000000000..52fa40d24
 +        }
 +        ++idx;
 +    }
-+    lc.force = force();
++    // Analysed at 1 N: results scale to any load without running again.
++    lc.force = m_direction;
 +
-+    // The analysis follows the settings the object will actually be printed with.
 +    DynamicPrintConfig cfg = wxGetApp().preset_bundle->full_config();
 +    cfg.apply(mo->config.get(), true);
-+    SA::PrintSettings print;
-+    const double      nozzle = cfg.opt_float("nozzle_diameter", 0);
-+    print.layer_height       = cfg.opt_float("layer_height");
-+    print.wall_loops         = cfg.opt_int("wall_loops");
-+    print.infill             = cfg.option<ConfigOptionPercent>("sparse_infill_density")->value / 100.;
-+    print.wall_width         = cfg.get_abs_value("inner_wall_line_width", nozzle);
-+    if (print.wall_width <= 0.)
-+        print.wall_width = 1.125 * nozzle;
-+
-+    const auto  *types    = cfg.option<ConfigOptionStrings>("filament_type");
-+    const int    extruder = cfg.has("extruder") ? std::max(1, cfg.opt_int("extruder")) : 1;
-+    const std::string type = types && !types->values.empty() ? types->values[std::min<size_t>(extruder - 1, types->values.size() - 1)] : "";
++    const auto       *types    = cfg.option<ConfigOptionStrings>("filament_type");
++    const int         extruder = cfg.has("extruder") ? std::max(1, cfg.opt_int("extruder")) : 1;
++    const std::string type     = types && !types->values.empty() ? types->values[std::min<size_t>(extruder - 1, types->values.size() - 1)] : "";
 +    const SA::Material *material = SA::find_material(type);
 +    m_material_note = material ? material->name :
 +                                 (boost::format(_u8L("%1% (unknown filament type %2%)")) % SA::default_material().name % type).str();
 +
-+    m_print_note = (boost::format(_u8L("%1% walls, %2% infill, %3% mm layers")) % print.wall_loops %
-+                    (std::to_string(int(std::round(print.infill * 100.))) + "%") % print.layer_height).str();
++    std::optional<SA::PrintedLayers> layers = sliced_layers(Slic3r::bounding_box(mesh).min.z());
++    m_from_slices                           = layers.has_value();
++    if (m_from_slices) {
++        m_print_note = _u8L("From the sliced layers, with modifiers and solid infill");
++    } else {
++        // Laid out from the object's settings as Orca would print it.
++        SA::PrintSettings print;
++        const double      nozzle = cfg.opt_float("nozzle_diameter", 0);
++        print.layer_height       = cfg.opt_float("layer_height");
++        print.wall_loops         = cfg.opt_int("wall_loops");
++        print.infill             = cfg.option<ConfigOptionPercent>("sparse_infill_density")->value / 100.;
++        print.wall_width         = cfg.get_abs_value("inner_wall_line_width", nozzle);
++        if (print.wall_width <= 0.)
++            print.wall_width = 1.125 * nozzle;
++        auto shell_layers = [&](const char *layers_key, const char *thickness_key) {
++            return std::max(cfg.opt_int(layers_key), int(std::ceil(cfg.opt_float(thickness_key) / print.layer_height - 1e-6)));
++        };
++        print.top_layers    = shell_layers("top_shell_layers", "top_shell_thickness");
++        print.bottom_layers = shell_layers("bottom_shell_layers", "bottom_shell_thickness");
++        layers              = SA::layers_from_mesh(mesh, print);
++        m_print_note = (boost::format(_u8L("%1% walls, %2% top and %3% bottom layers, %4% infill, %5% mm layers")) % print.wall_loops %
++                        print.top_layers % print.bottom_layers % (std::to_string(int(std::round(print.infill * 100.))) + "%") %
++                        print.layer_height).str();
++    }
 +
-+    m_result       = SA::analyse(mesh, lc, material ? *material : SA::default_material(), print);
++    m_base_result = SA::analyse(*layers, lc, material ? *material : SA::default_material());
++    m_result_mesh = std::move(mesh);
++    m_vertex_utilization.clear();
++    m_vertex_displacement.clear();
++    if (m_base_result->ok())
++        for (const stl_vertex &v : m_result_mesh.vertices) {
++            m_vertex_utilization.push_back(SA::utilization_at(*m_base_result, v.cast<double>()));
++            m_vertex_displacement.push_back(SA::displacement_at(*m_base_result, v.cast<double>()));
++        }
 +    m_result_stale = false;
++    update_result();
++}
++
++void GLGizmoStrength::update_result()
++{
++    m_mesh_phase = -1.;
++    m_result     = m_base_result;
++    if (!m_result || !m_result->ok())
++        return;
++    if (m_load_mode == LoadMode::MaxLoad) {
++        if (m_result->safety_factor <= 0.) {
++            m_result->error = _u8L("This part has no closed wall around the cut to resist the twist, so it takes no load like this.");
++            return;
++        }
++        m_result_load = m_result->safety_factor / std::max(1.f, m_target_fos);
++    } else {
++        m_result_load = m_magnitude * unit_to_newton();
++        if (m_result_load <= 0.) {
++            m_result->error = _u8L("Enter a load greater than zero.");
++            return;
++        }
++    }
++    SA::scale_load(*m_result, m_result_load);
 +    m_parent.set_as_dirty();
 +}
 +
-+void GLGizmoStrength::render_direction_input()
++void GLGizmoStrength::render_load_input()
 +{
 +    ImGui::AlignTextToFramePadding();
 +    m_imgui->text(_L("Load"));
 +    ImGui::SameLine(m_imgui->scaled(4.f));
-+    ImGui::PushItemWidth(m_imgui->scaled(4.f));
-+    if (ImGui::BBLDragFloat("##magnitude", &m_magnitude, 0.1f, 0.f, 10000.f, "%.2f")) {
-+        m_magnitude = std::max(0.f, m_magnitude);
-+        invalidate_result();
++    if (m_imgui->radio_button(_L("Maximum load"), m_load_mode == LoadMode::MaxLoad)) {
++        m_load_mode = LoadMode::MaxLoad;
++        update_result();
++    }
++    ImGui::SameLine();
++    if (m_imgui->radio_button(_L("Check a load"), m_load_mode == LoadMode::CheckLoad)) {
++        m_load_mode = LoadMode::CheckLoad;
++        update_result();
++    }
++
++    ImGui::AlignTextToFramePadding();
++    if (m_load_mode == LoadMode::MaxLoad) {
++        m_imgui->text(_L("Safety factor"));
++        ImGui::SameLine(m_imgui->scaled(4.f));
++        ImGui::PushItemWidth(m_imgui->scaled(4.f));
++        if (ImGui::BBLDragFloat("##target_fos", &m_target_fos, 0.05f, 1.f, 10.f, "%.2f")) {
++            m_target_fos = std::clamp(m_target_fos, 1.f, 10.f);
++            update_result();
++        }
++    } else {
++        m_imgui->text(_L("Load"));
++        ImGui::SameLine(m_imgui->scaled(4.f));
++        ImGui::PushItemWidth(m_imgui->scaled(4.f));
++        if (ImGui::BBLDragFloat("##magnitude", &m_magnitude, 0.1f, 0.f, 10000.f, "%.2f")) {
++            m_magnitude = std::max(0.f, m_magnitude);
++            update_result();
++        }
 +    }
 +    ImGui::SameLine();
 +    int unit = int(m_unit);
 +    if (m_imgui->combo(std::string("##unit"), {_u8L("kg"), _u8L("lb"), _u8L("N")}, unit, 0, 0.f, m_imgui->scaled(3.f))) {
 +        m_unit = Unit(unit);
-+        invalidate_result();
++        update_result();
 +    }
++}
 +
++void GLGizmoStrength::render_direction_input()
++{
 +    ImGui::AlignTextToFramePadding();
 +    m_imgui->text(_L("Direction"));
 +    static const std::array<std::pair<const char *, Vec3d>, 6> presets{{{"-Z", -Vec3d::UnitZ()},
@@ -1119,15 +1641,32 @@ index 000000000..52fa40d24
 +    if (m_result_stale)
 +        m_imgui->text_colored(ImGuiWrapper::COL_RED, _L("Results are out of date. Analyze again."));
 +
-+    const ImVec4 color = r.safety_factor < 1. ? ImGuiWrapper::COL_RED :
-+                         r.safety_factor < 2. ? ImGuiWrapper::COL_ORANGE_LIGHT :
-+                                                ImGuiWrapper::COL_ORCA;
-+    const wxString verdict = r.safety_factor < 1. ? _L("Likely to break") :
-+                             r.safety_factor < 2. ? _L("Little margin") :
-+                                                    _L("Should hold");
-+    m_imgui->text_colored(color, (boost::format(_u8L("Safety factor %1$.2f")) % r.safety_factor).str() + "  " + verdict.ToUTF8().data());
++    if (m_load_mode == LoadMode::MaxLoad) {
++        m_imgui->text_colored(ImGuiWrapper::COL_ORCA, (boost::format(_u8L("Maximum load %1%")) % format_load(m_result_load)).str());
++        m_imgui->text((boost::format(_u8L("at safety factor %1$.2f")) % r.safety_factor).str());
++    } else {
++        const std::string fos = (boost::format(_u8L("Safety factor %1$.2f")) % r.safety_factor).str();
++        if (failed()) {
++            // Flash the verdict so a failing part cannot be missed.
++            const double t     = std::chrono::duration<double>(std::chrono::steady_clock::now() - m_start_time).count();
++            const float  pulse = float(0.5 + 0.5 * std::sin(2. * PI * FLASH_HZ * t));
++            const std::string text = fos + "  " + _u8L("Will break");
++            const ImVec2 pos  = ImGui::GetCursorScreenPos();
++            const ImVec2 size = ImGui::CalcTextSize(text.c_str());
++            const float  pad  = m_imgui->scaled(0.2f);
++            ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(pos.x - pad, pos.y - pad), ImVec2(pos.x + size.x + pad, pos.y + size.y + pad),
++                                                      ImGui::GetColorU32(ImVec4(0.85f, 0.1f, 0.1f, 0.35f + 0.65f * pulse)), 3.f);
++            m_imgui->text_colored(ImVec4(1.f, 1.f, 1.f, 1.f), text);
++            m_parent.request_extra_frame();
++        } else {
++            const bool low = r.safety_factor < m_target_fos;
++            m_imgui->text_colored(low ? ImGuiWrapper::COL_ORANGE_LIGHT : ImGuiWrapper::COL_ORCA,
++                                  fos + "  " + (low ? _u8L("Little margin") : _u8L("Should hold")));
++        }
++        m_imgui->text((boost::format(_u8L("Load %1%")) % format_load(m_result_load)).str());
++    }
 +
-+    const char *axes[3]  = {"X", "Y", "Z"};
++    const char       *axes[3]  = {"X", "Y", "Z"};
 +    const std::string modes[4] = {_u8L("bending"), _u8L("tension"), _u8L("shear"), _u8L("torsion")};
 +    m_imgui->text((boost::format(_u8L("Peak stress %1$.1f MPa of %2$.1f MPa allowed")) % r.stress % r.allowable).str());
 +    m_imgui->text((boost::format(_u8L("Weakest cut: %1% = %2$.1f mm, mostly %3%")) % axes[r.axis] % r.critical_point[r.axis] %
@@ -1137,7 +1676,26 @@ index 000000000..52fa40d24
 +    if (r.kt > 1.01)
 +        m_imgui->text((boost::format(_u8L("Stress raised %1$.1fx by a hole")) % r.kt).str());
 +    m_imgui->text((boost::format(_u8L("Deflection at load %1$.2f mm")) % r.deflection).str());
-+    m_imgui->text_colored(ImGuiWrapper::COL_GREY_LIGHT, m_material_note + ", " + m_print_note);
++
++    ImGui::Separator();
++    if (m_imgui->bbl_checkbox(_L("Stress colors"), m_show_stress))
++        m_mesh_phase = -1.;
++    ImGui::SameLine();
++    if (m_imgui->bbl_checkbox(_L("Deflected shape"), m_show_deflection))
++        m_mesh_phase = -1.;
++    if (m_show_deflection) {
++        if (m_imgui->bbl_checkbox(_L("Animate"), m_animate))
++            m_mesh_phase = -1.;
++        ImGui::SameLine();
++        if (m_imgui->bbl_checkbox(_L("Exaggerate"), m_exaggerate))
++            m_mesh_phase = -1.;
++    }
++    if (m_show_stress)
++        m_imgui->text_colored(ImGuiWrapper::COL_GREY_LIGHT, _L("Blue: little stress. Red: at the breaking point."));
++
++    m_imgui->text_colored(ImGuiWrapper::COL_GREY_LIGHT, m_material_note + ". " + m_print_note + ".");
++    if (!m_from_slices)
++        m_imgui->text_colored(ImGuiWrapper::COL_GREY_LIGHT, _L("Slice the plate to include modifiers and per-part settings."));
 +    m_imgui->text_colored(ImGuiWrapper::COL_GREY_LIGHT, _L("Estimate from beam theory, not FEA."));
 +}
 +
@@ -1146,7 +1704,7 @@ index 000000000..52fa40d24
 +    if (!m_c->selection_info()->model_object())
 +        return;
 +
-+    const float approx_height = m_imgui->scaled(16.f);
++    const float approx_height = m_imgui->scaled(20.f);
 +    y                         = std::min(y, bottom_limit - approx_height);
 +    GizmoImguiSetNextWIndowPos(x, y, ImGuiCond_Always, 0.0f, 0.0f);
 +
@@ -1176,6 +1734,7 @@ index 000000000..52fa40d24
 +    }
 +
 +    ImGui::Separator();
++    render_load_input();
 +    render_direction_input();
 +    ImGui::Separator();
 +
@@ -1207,10 +1766,10 @@ index 000000000..52fa40d24
 +} // namespace Slic3r::GUI
 diff --git a/src/slic3r/GUI/Gizmos/GLGizmoStrength.hpp b/src/slic3r/GUI/Gizmos/GLGizmoStrength.hpp
 new file mode 100644
-index 000000000..4ea128f19
+index 000000000..1721921aa
 --- /dev/null
 +++ b/src/slic3r/GUI/Gizmos/GLGizmoStrength.hpp
-@@ -0,0 +1,106 @@
+@@ -0,0 +1,139 @@
 +#pragma once
 +
 +#include "GLGizmoPainterBase.hpp"
@@ -1220,12 +1779,15 @@ index 000000000..4ea128f19
 +
 +#include <cereal/types/map.hpp>
 +
++#include <array>
++#include <chrono>
 +#include <optional>
 +
 +namespace Slic3r::GUI {
 +
-+// Paint where a part is held and where it is loaded, aim the load, and get a
-+// quick safety factor for the part as it will be printed.
++// Paint where a part is held and where it is loaded, aim the load, and get either
++// the largest load it takes at a chosen safety factor or the safety factor at a
++// given load, for the part as it will be printed.
 +//
 +// The load case is a what-if check, not part of the print, so it lives in this
 +// gizmo for the session (with undo/redo) and never touches the model or the
@@ -1266,6 +1828,8 @@ index 000000000..4ea128f19
 +    PainterGizmoType get_painter_type() const override;
 +
 +    enum class Unit { Kilogram, Pound, Newton };
++    // Newcomers rarely know what load to expect, so the default answers "how much can it take?".
++    enum class LoadMode { MaxLoad, CheckLoad };
 +
 +    // Paint of one model part, with the facet count it was painted on so that
 +    // paint never gets applied to a mesh that has since changed.
@@ -1277,36 +1841,64 @@ index 000000000..4ea128f19
 +    };
 +    using Paint = std::vector<PartPaint>;
 +
-+    Vec3d  force() const;
++    static constexpr size_t StressBands = 8;
++
++    double      unit_to_newton() const;
++    std::string format_load(double newtons) const;
 +    Transform3d arrow_matrix() const;
 +    // Mouse over the arrow, in screen space.
-+    bool   arrow_hit(const Vec2d &mouse) const;
-+    void   aim_arrow(const Vec2d &mouse);
-+    void   set_direction(const Vec3d &direction);
-+    void   invalidate_result() { m_result_stale = m_result.has_value(); }
-+    void   update_load_point();
-+    void   run_analysis();
-+    void   render_model(GLModel &model, const Transform3d &matrix, const ColorRGBA &color) const;
-+    void   render_direction_input();
-+    void   render_result();
++    bool arrow_hit(const Vec2d &mouse) const;
++    void aim_arrow(const Vec2d &mouse);
++    void set_direction(const Vec3d &direction);
++    void invalidate_result() { m_result_stale = m_base_result.has_value(); }
++    void update_load_point();
++    std::optional<Feature::StrengthAnalysis::PrintedLayers> sliced_layers(double z_min) const;
++    void run_analysis();
++    // Rescales the unit-load result to the current load mode and value.
++    void update_result();
++    bool failed() const;
++    bool show_result_mesh() const;
++    void update_result_mesh(double phase);
++    void render_model(GLModel &model, const Transform3d &matrix, const ColorRGBA &color) const;
++    void render_load_input();
++    void render_direction_input();
++    void render_result();
 +
 +    static const ColorRGBA FixtureColor;
 +    static const ColorRGBA LoadColor;
 +
 +    std::map<size_t, Paint> m_paint; // keyed by ModelObject id
-+    Vec3d                   m_direction = -Vec3d::UnitZ();
-+    float                   m_magnitude = 1.f;
-+    Unit                    m_unit      = Unit::Kilogram;
++    Vec3d                   m_direction  = -Vec3d::UnitZ();
++    float                   m_magnitude  = 1.f;
++    Unit                    m_unit       = Unit::Kilogram;
++    LoadMode                m_load_mode  = LoadMode::MaxLoad;
++    float                   m_target_fos = 1.5f;
 +
-+    std::optional<Vec3d> m_load_point;  // world, centroid of the painted load
-+    double               m_arrow_length = 20.;
++    std::optional<Vec3d> m_load_point; // world, centroid of the painted load
++    double               m_arrow_length  = 20.;
 +    bool                 m_arrow_hovered = false;
 +    bool                 m_aiming        = false;
 +
-+    std::optional<Feature::StrengthAnalysis::Result> m_result;
++    // The analysis runs at 1 N; everything in it is linear in the load.
++    std::optional<Feature::StrengthAnalysis::Result> m_base_result;
++    std::optional<Feature::StrengthAnalysis::Result> m_result; // at m_result_load
++    double                                           m_result_load  = 0.; // N
 +    bool                                             m_result_stale = false;
 +    std::string                                      m_material_note;
 +    std::string                                      m_print_note;
++    bool                                             m_from_slices = false;
++
++    // Result views: stress colours and the deflected shape, optionally animated.
++    bool                                  m_show_stress = false;
++    bool                                  m_show_deflection = false;
++    bool                                  m_animate     = true;
++    bool                                  m_exaggerate  = true;
++    indexed_triangle_set                  m_result_mesh; // world, all model parts
++    std::vector<double>                   m_vertex_utilization;
++    std::vector<Vec3d>                    m_vertex_displacement;
++    double                                m_mesh_phase = -1.;
++    std::array<GLModel, StressBands>      m_stress_models;
++    std::chrono::steady_clock::time_point m_start_time = std::chrono::steady_clock::now();
 +
 +    GLModel m_arrow;
 +    GLModel m_ring;
@@ -1415,6 +2007,148 @@ index 855e26c10..82a225e8e 100644
  #ifdef SLIC3R_CAD
          // Both need the CAD kernel (GeometryEngine); keep them last so that with
          // SLIC3R_CAD off the enum matches upstream's numbering exactly.
+diff --git a/tests/fff_print/CMakeLists.txt b/tests/fff_print/CMakeLists.txt
+index 822844f50..45c246225 100644
+--- a/tests/fff_print/CMakeLists.txt
++++ b/tests/fff_print/CMakeLists.txt
+@@ -22,6 +22,7 @@ add_executable(${_TEST_NAME}_tests
+ 	test_seam_placer.cpp
+ 	test_skirt_brim.cpp
+ 	test_slicing_pipeline_hook.cpp
++	test_strength_analysis.cpp
+ 	test_support_material.cpp
+ 	test_texture_displacement.cpp
+ 	test_tree_support.cpp
+diff --git a/tests/fff_print/test_strength_analysis.cpp b/tests/fff_print/test_strength_analysis.cpp
+new file mode 100644
+index 000000000..885bb9912
+--- /dev/null
++++ b/tests/fff_print/test_strength_analysis.cpp
+@@ -0,0 +1,124 @@
++#include <catch2/catch_all.hpp>
++
++#include "libslic3r/Feature/StrengthAnalysis/StrengthAnalysis.hpp"
++#include "libslic3r/Model.hpp"
++#include "libslic3r/Print.hpp"
++
++#include "test_helpers.hpp"
++
++using namespace Slic3r;
++using namespace Slic3r::Test;
++using namespace Slic3r::Feature::StrengthAnalysis;
++using Catch::Matchers::WithinAbs;
++using Catch::Matchers::WithinRel;
++
++namespace {
++
++constexpr double LENGTH = 100., WIDTH = 10., HEIGHT = 10., LOAD = 10.;
++
++// A LENGTH x WIDTH x HEIGHT bar, 0.2 mm layers, 2 walls, 3 top and bottom layers.
++void slice_bar(Print &print, Model &model, const std::string &infill)
++{
++    init_print({make_cube(LENGTH, WIDTH, HEIGHT)}, print, model,
++               {{"layer_height", 0.2},
++                {"initial_layer_print_height", 0.2},
++                {"wall_loops", 2},
++                {"top_shell_layers", 3},
++                {"bottom_shell_layers", 3},
++                {"top_shell_thickness", 0},
++                {"bottom_shell_thickness", 0},
++                {"sparse_infill_density", infill}});
++    print.process();
++}
++
++indexed_triangle_set world_mesh(const PrintObject &object)
++{
++    const ModelObject   *mo  = object.model_object();
++    indexed_triangle_set its = mo->volumes.front()->mesh().its;
++    its_transform(its, mo->instances.front()->get_matrix() * mo->volumes.front()->get_matrix());
++    return its;
++}
++
++// Held on its -X end face, pushed down on its +X end face.
++LoadCase cantilever(const indexed_triangle_set &bar)
++{
++    const BoundingBoxf3 bbox = bounding_box(bar);
++    auto end_face = [&bar](float x) {
++        indexed_triangle_set out;
++        out.vertices = bar.vertices;
++        for (const Vec3i32 &f : bar.indices)
++            if (std::all_of(f.begin(), f.end(), [&](int v) { return std::abs(bar.vertices[v].x() - x) < 1e-3f; }))
++                out.indices.push_back(f);
++        return out;
++    };
++    return {end_face(float(bbox.min.x())), end_face(float(bbox.max.x())), Vec3d(0., 0., -LOAD)};
++}
++
++PrintedLayers sliced_layers(const Print &print)
++{
++    const PrintObject &object = *print.objects().front();
++    return layers_from_print_object(object, object.instances().front(), bounding_box(world_mesh(object)).min.z());
++}
++
++double area_at_density(const PrintedLayer &layer, double density)
++{
++    double area = 0.;
++    for (const LayerFill &fill : layer.fills)
++        if (std::abs(fill.density - density) < 1e-6)
++            for (const ExPolygon &ex : fill.area)
++                area += unscaled<double>(unscaled<double>(ex.area()));
++    return area;
++}
++
++} // namespace
++
++TEST_CASE("Sliced layers count walls and skins as solid and sparse infill at its density", "[StrengthAnalysis]")
++{
++    Print print;
++    Model model;
++    slice_bar(print, model, "15%");
++    const PrintedLayers layers = sliced_layers(print);
++
++    // 10 mm at 0.2 mm layers.
++    REQUIRE(layers.size() == 50);
++    CHECK_THAT(layers.back().z_top - layers.front().z_bottom, WithinRel(HEIGHT, 1e-6));
++    // The first layer is bottom skin; the middle one is mostly sparse infill inside the walls.
++    CHECK_THAT(area_at_density(layers.front(), 0.15), WithinAbs(0., 1e-9));
++    CHECK(area_at_density(layers[25], 0.15) > 0.5 * LENGTH * WIDTH);
++    CHECK(area_at_density(layers[25], 1.) > 0.);
++}
++
++TEST_CASE("Denser infill from the slicer makes the part stronger", "[StrengthAnalysis]")
++{
++    Print sparse_print, dense_print;
++    Model sparse_model, dense_model;
++    slice_bar(sparse_print, sparse_model, "15%");
++    slice_bar(dense_print, dense_model, "60%");
++    const LoadCase lc     = cantilever(world_mesh(*sparse_print.objects().front()));
++    const Result   sparse = analyse(sliced_layers(sparse_print), lc, default_material());
++    const Result   dense  = analyse(sliced_layers(dense_print), lc, default_material());
++    REQUIRE(sparse.ok());
++    REQUIRE(dense.ok());
++    CHECK(dense.safety_factor > sparse.safety_factor);
++    CHECK(dense.deflection < sparse.deflection);
++}
++
++TEST_CASE("Estimate from settings agrees with the sliced layers", "[StrengthAnalysis]")
++{
++    Print print;
++    Model model;
++    slice_bar(print, model, "15%");
++    const indexed_triangle_set bar = world_mesh(*print.objects().front());
++    PrintSettings              settings;
++    settings.layer_height  = 0.2;
++    settings.wall_loops    = 2;
++    settings.top_layers    = 3;
++    settings.bottom_layers = 3;
++    settings.infill        = 0.15;
++    const Result sliced    = analyse(sliced_layers(print), cantilever(bar), default_material());
++    const Result estimated = analyse(layers_from_mesh(bar, settings), cantilever(bar), default_material());
++    REQUIRE(sliced.ok());
++    REQUIRE(estimated.ok());
++    CHECK_THAT(estimated.safety_factor, WithinRel(sliced.safety_factor, 0.25));
++    CHECK_THAT(estimated.deflection, WithinRel(sliced.deflection, 0.25));
++}
 diff --git a/tests/libslic3r/CMakeLists.txt b/tests/libslic3r/CMakeLists.txt
 index b93551917..e30a9b131 100644
 --- a/tests/libslic3r/CMakeLists.txt
@@ -1429,10 +2163,10 @@ index b93551917..e30a9b131 100644
      test_trianglemesh_slicer.cpp
 diff --git a/tests/libslic3r/test_strength_analysis.cpp b/tests/libslic3r/test_strength_analysis.cpp
 new file mode 100644
-index 000000000..1fd20f590
+index 000000000..c2b30d114
 --- /dev/null
 +++ b/tests/libslic3r/test_strength_analysis.cpp
-@@ -0,0 +1,123 @@
+@@ -0,0 +1,197 @@
 +#include <catch2/catch_all.hpp>
 +
 +#include "libslic3r/Feature/StrengthAnalysis/StrengthAnalysis.hpp"
@@ -1458,10 +2192,10 @@ index 000000000..1fd20f590
 +
 +constexpr double LENGTH = 100., WIDTH = 10., HEIGHT = 10., LOAD = 10.;
 +
-+// A WIDTH x HEIGHT solid bar along X, held at x = 0 and pushed down at x = LENGTH.
-+LoadCase cantilever(const indexed_triangle_set &bar)
++// A WIDTH x HEIGHT bar along X, held at x = 0 and pushed down at x = LENGTH.
++LoadCase cantilever(const indexed_triangle_set &bar, double load = LOAD)
 +{
-+    return {face(bar, 0, 0.f), face(bar, 0, float(LENGTH)), Vec3d(0., 0., -LOAD)};
++    return {face(bar, 0, 0.f), face(bar, 0, float(LENGTH)), Vec3d(0., 0., -load)};
 +}
 +
 +PrintSettings solid()
@@ -1471,13 +2205,18 @@ index 000000000..1fd20f590
 +    return p;
 +}
 +
++Result analyse_bar(const PrintSettings &print, double load = LOAD)
++{
++    const indexed_triangle_set bar = its_make_cube(LENGTH, WIDTH, HEIGHT);
++    return analyse(layers_from_mesh(bar, print), cantilever(bar, load), *find_material("PLA"));
++}
++
 +} // namespace
 +
 +TEST_CASE("Cantilever stress and deflection follow beam theory", "[StrengthAnalysis]")
 +{
-+    const indexed_triangle_set bar = its_make_cube(LENGTH, WIDTH, HEIGHT);
-+    const Material            &pla = *find_material("PLA");
-+    const Result               res = analyse(bar, cantilever(bar), pla, solid());
++    const Material &pla = *find_material("PLA");
++    const Result    res = analyse_bar(solid());
 +    REQUIRE(res.ok());
 +
 +    // Critical cut next to the fixture, where the moment arm is longest.
@@ -1496,16 +2235,52 @@ index 000000000..1fd20f590
 +
 +TEST_CASE("Sparse infill weakens a part", "[StrengthAnalysis]")
 +{
-+    const indexed_triangle_set bar = its_make_cube(LENGTH, WIDTH, HEIGHT);
-+    PrintSettings              sparse;
++    PrintSettings sparse;
 +    sparse.wall_loops = 2;
 +    sparse.infill     = 0.15;
-+    const Result full  = analyse(bar, cantilever(bar), default_material(), solid());
-+    const Result light = analyse(bar, cantilever(bar), default_material(), sparse);
++    const Result full  = analyse_bar(solid());
++    const Result light = analyse_bar(sparse);
 +    REQUIRE(full.ok());
 +    REQUIRE(light.ok());
 +    CHECK(light.safety_factor < full.safety_factor);
 +    CHECK(light.deflection > full.deflection);
++}
++
++TEST_CASE("Top and bottom skins carry bending", "[StrengthAnalysis]")
++{
++    // Bending a flat bar puts its top and bottom skins furthest from the neutral axis.
++    PrintSettings bare;
++    bare.wall_loops    = 1;
++    bare.infill        = 0.;
++    bare.top_layers    = 0;
++    bare.bottom_layers = 0;
++    PrintSettings skinned  = bare;
++    skinned.top_layers    = 5;
++    skinned.bottom_layers = 5;
++    const Result without = analyse_bar(bare);
++    const Result with    = analyse_bar(skinned);
++    REQUIRE(without.ok());
++    REQUIRE(with.ok());
++    CHECK(with.safety_factor > 1.5 * without.safety_factor);
++}
++
++TEST_CASE("Fill densities of the printed layers drive the result", "[StrengthAnalysis]")
++{
++    // Sliced layers carry whatever modifiers decided; here every sparse fill is made solid.
++    const indexed_triangle_set bar = its_make_cube(LENGTH, WIDTH, HEIGHT);
++    PrintSettings              sparse;
++    sparse.infill        = 0.1;
++    PrintedLayers layers = layers_from_mesh(bar, sparse);
++    const Result  before = analyse(layers, cantilever(bar), default_material());
++    for (PrintedLayer &layer : layers)
++        for (LayerFill &fill : layer.fills)
++            fill.density = 1.;
++    const Result after = analyse(layers, cantilever(bar), default_material());
++    const Result solid_bar = analyse_bar(solid());
++    REQUIRE(before.ok());
++    REQUIRE(after.ok());
++    CHECK(after.safety_factor > before.safety_factor);
++    CHECK_THAT(after.safety_factor, WithinRel(solid_bar.safety_factor, 1e-6));
 +}
 +
 +TEST_CASE("Load across layers is limited by layer adhesion", "[StrengthAnalysis]")
@@ -1514,10 +2289,42 @@ index 000000000..1fd20f590
 +    const indexed_triangle_set post = its_make_cube(WIDTH, HEIGHT, LENGTH);
 +    const LoadCase             lc{face(post, 2, 0.f), face(post, 2, float(LENGTH)), Vec3d(LOAD, 0., 0.)};
 +    const Material            &pla = *find_material("PLA");
-+    const Result               res = analyse(post, lc, pla, solid());
++    const Result               res = analyse(layers_from_mesh(post, solid()), lc, pla);
 +    REQUIRE(res.ok());
 +    CHECK(res.axis == 2);
 +    CHECK_THAT(res.allowable, WithinRel(pla.uts * pla.z_factor, 1e-6));
++}
++
++TEST_CASE("Deflected shape follows the load from a still fixture", "[StrengthAnalysis]")
++{
++    const Result res = analyse_bar(solid());
++    REQUIRE(res.ok());
++    REQUIRE(res.run_axis == 0);
++    const Vec3d tip = displacement_at(res, res.load_point);
++    CHECK(tip.z() < 0.);
++    CHECK_THAT(-tip.z(), WithinRel(res.deflection, 1e-6));
++    CHECK_THAT(displacement_at(res, Vec3d(0., WIDTH / 2., HEIGHT / 2.)).norm(), WithinAbs(0., 1e-9));
++    // Deflection grows towards the load.
++    CHECK(displacement_at(res, Vec3d(LENGTH / 2., WIDTH / 2., HEIGHT / 2.)).z() > tip.z());
++}
++
++TEST_CASE("Results scale linearly with the load", "[StrengthAnalysis]")
++{
++    Result scaled = analyse_bar(solid());
++    scale_load(scaled, 2.);
++    const Result doubled = analyse_bar(solid(), 2. * LOAD);
++    REQUIRE(doubled.ok());
++    CHECK_THAT(scaled.safety_factor, WithinRel(doubled.safety_factor, 1e-9));
++    CHECK_THAT(scaled.deflection, WithinRel(doubled.deflection, 1e-9));
++    CHECK_THAT(displacement_at(scaled, scaled.load_point).z(), WithinRel(displacement_at(doubled, doubled.load_point).z(), 1e-9));
++}
++
++TEST_CASE("Stress colouring peaks at the critical cut", "[StrengthAnalysis]")
++{
++    const Result res = analyse_bar(solid());
++    REQUIRE(res.ok());
++    CHECK_THAT(utilization_at(res, res.critical_point), WithinRel(1. / res.safety_factor, 1e-6));
++    CHECK(utilization_at(res, Vec3d(0.9 * LENGTH, WIDTH / 2., HEIGHT / 2.)) < utilization_at(res, res.critical_point));
 +}
 +
 +TEST_CASE("A load applied on the fixture stresses nothing", "[StrengthAnalysis]")
@@ -1526,18 +2333,19 @@ index 000000000..1fd20f590
 +    const indexed_triangle_set bar    = its_make_cube(LENGTH, WIDTH, HEIGHT);
 +    const indexed_triangle_set bottom = face(bar, 2, 0.f);
 +    const LoadCase             lc{bottom, bottom, Vec3d(0., 0., -LOAD)};
-+    CHECK_FALSE(analyse(bar, lc, default_material(), solid()).ok());
++    CHECK_FALSE(analyse(layers_from_mesh(bar, solid()), lc, default_material()).ok());
 +}
 +
 +TEST_CASE("Unpainted fixture or load is reported", "[StrengthAnalysis]")
 +{
-+    const indexed_triangle_set bar = its_make_cube(LENGTH, WIDTH, HEIGHT);
-+    LoadCase                   lc  = cantilever(bar);
++    const indexed_triangle_set bar    = its_make_cube(LENGTH, WIDTH, HEIGHT);
++    const PrintedLayers        layers = layers_from_mesh(bar, solid());
++    LoadCase                   lc     = cantilever(bar);
 +    lc.fixture.indices.clear();
-+    CHECK_FALSE(analyse(bar, lc, default_material(), solid()).ok());
++    CHECK_FALSE(analyse(layers, lc, default_material()).ok());
 +    lc = cantilever(bar);
 +    lc.load.indices.clear();
-+    CHECK_FALSE(analyse(bar, lc, default_material(), solid()).ok());
++    CHECK_FALSE(analyse(layers, lc, default_material()).ok());
 +}
 +
 +TEST_CASE("Filament types resolve to material properties", "[StrengthAnalysis]")
