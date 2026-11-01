@@ -1,3 +1,7 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Print Strength Bench</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -973,7 +977,6 @@ function draw() {
 
   for (const [k, label] of VIEWS) {
     const live = (k === "fos" || k === "stress") ? hasSim : true;
-    if (k === "3d" && S.files.length > 1) label = label;
     const b = el("button", "vbtn" + (S.view === k ? " on" : ""), label);
     b.disabled = !live;
     if (!live) b.title = "run the analysis with a load to see this";
